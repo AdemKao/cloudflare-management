@@ -1,197 +1,240 @@
 # Command Reference
 
-This page documents the `cfm` commands available in v0.1.
+This page documents the `cfm` command surface in v0.2. The original v0.1 token-only workflow remains supported.
 
 ## Global options
 
 ```bash
 cfm --help
-cfm -h
 cfm --version
-cfm -v
 ```
 
-## `cfm init`
+## Token-only / backward-compatible commands
 
-Initialize the local configuration, secret, log, and runtime directories.
+### `cfm init`
 
 ```bash
 cfm init
 ```
 
-Use this once after installation. Other commands also create required directories when needed, so it is safe to run more than once.
+Initializes configuration, secret, log, and runtime directories. Existing v1 configuration is migrated to schema v2 on first load with a metadata backup.
 
-## `cfm add <name>`
+### `cfm add <name>`
 
-Add or import a remotely-managed Cloudflare Tunnel connector token.
+Add a Tunnel Token for an existing remotely-managed Tunnel:
 
-Interactive mode:
+```bash
+cfm add company-a
+cfm add company-a --token-file ~/Downloads/company-a.token
+```
+
+Profiles created this way use `managementMode: token-only`. They do not require an Account API Token.
+
+### Local connector lifecycle
+
+```bash
+cfm list
+cfm start <name>
+cfm stop <name>
+cfm restart <name>
+cfm start-all
+cfm stop-all
+cfm status [name]
+cfm logs <name>
+cfm logs <name> --follow
+cfm doctor [name]
+cfm remove <name>
+cfm config
+```
+
+`cfm remove` only removes the local profile/token/log; it does not delete the remote Cloudflare Tunnel.
+
+## Account API mode
+
+API mode is optional. Use it when `cfm` should create/manage Cloudflare resources.
+
+### `cfm account add <name>`
+
+```bash
+cfm account add company-a
+```
+
+Interactive prompts request the Cloudflare Account ID and API Token. Non-interactive token import:
+
+```bash
+cfm account add company-a \
+  --account-id <ACCOUNT_ID> \
+  --token-file ~/.secrets/company-a-api-token \
+  --zone-id <OPTIONAL_DEFAULT_ZONE_ID>
+```
+
+The API credential is verified before account metadata is saved. Account aliases and local Tunnel/profile aliases are separate namespaces, so an existing `cfm add company-a` profile can coexist with `cfm account add company-a`.
+
+### Account inspection
+
+```bash
+cfm account list
+cfm account show company-a
+cfm account doctor company-a
+cfm account remove company-a --yes
+```
+
+Account removal is blocked while managed Tunnel profiles still reference the account.
+
+## Tunnel provisioning
+
+### List remote Tunnels
+
+```bash
+cfm tunnel list company-a
+```
+
+### Create a Tunnel
+
+```bash
+cfm tunnel create company-a solana-dev
+```
+
+This creates a remotely-managed Tunnel through the Cloudflare API, retrieves its Tunnel Token, stores the token locally with restrictive permissions, and creates a `provisioned` local profile.
+
+The command refuses to create a Tunnel when a local profile with the same name already exists. For a pre-existing manual Tunnel, use adoption instead.
+
+### Adopt an existing v0.1/manual Tunnel
+
+```bash
+cfm tunnel adopt company-a company-a
+```
+
+If the remote Tunnel name cannot be resolved uniquely, provide its ID explicitly:
+
+```bash
+cfm tunnel adopt company-a company-a \
+  --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption changes the local profile from `token-only` to `adopted` and records the Account/Tunnel ID. It does **not** create another Tunnel and does **not** replace the existing Tunnel Token file.
+
+### Show or refresh Tunnel credentials
+
+```bash
+cfm tunnel show company-a solana-dev
+cfm tunnel token company-a solana-dev
+```
+
+`cfm tunnel token` refreshes the Tunnel Token into its protected local file. It intentionally does not print the raw token.
+
+### Delete a remotely-managed Tunnel
+
+```bash
+cfm tunnel delete company-a solana-dev
+```
+
+The command requires explicit confirmation. Automation may use:
+
+```bash
+cfm tunnel delete company-a solana-dev --yes
+```
+
+This is different from `cfm remove`, which only removes local state.
+
+## Published hostname routes
+
+### List routes
+
+```bash
+cfm route list company-a solana-dev
+```
+
+### Add/update hostname → origin
+
+Without DNS mutation:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001
+```
+
+Also create/update the DNS CNAME:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
+```
+
+If the account has a default Zone ID, `--zone-id` can be omitted.
+
+### Remove a route
+
+```bash
+cfm route remove company-a solana-dev \
+  --hostname webhook-dev.example.com
+```
+
+Also remove matching DNS records:
+
+```bash
+cfm route remove company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --dns
+```
+
+## `cfm expose` — Phase 4 convenience flow
+
+Create or reuse a managed Tunnel, configure a route/DNS, and start the connector:
+
+```bash
+cfm expose company-a \
+  --name solana-dev \
+  --hostname webhook-dev.example.com \
+  --port 3001
+```
+
+Equivalent origin form:
+
+```bash
+cfm expose company-a \
+  --name solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001
+```
+
+Options:
+
+```text
+--zone-id <id>   Override the account default Zone ID
+--no-dns         Configure Tunnel route only; do not touch DNS
+--no-start       Provision/configure only; do not start cloudflared
+```
+
+`cfm expose` reuses only `adopted` or `provisioned` profiles. A `token-only` profile must be explicitly adopted first; the convenience command will not silently attach or replace an existing Tunnel.
+
+## Upgrade behavior from v0.1
+
+A user who previously ran:
 
 ```bash
 cfm add company-a
 ```
 
-The token is entered through a hidden TTY prompt and stored outside the repository.
-
-Import from a local token file:
-
-```bash
-cfm add company-a --token-file ~/Downloads/company-a.token
-```
-
-Replace an existing profile:
-
-```bash
-cfm add company-a --token-file ~/Downloads/company-a-new.token --force
-```
-
-Profile names may contain letters, numbers, dots, underscores, and hyphens.
-
-## `cfm remove <name>`
-
-Stop the connector if it is running, remove the profile, remove the locally stored token file, and remove the local connector log.
-
-```bash
-cfm remove company-a
-```
-
-This does **not** delete the tunnel from Cloudflare. Revoke or rotate the tunnel token in Cloudflare when offboarding access.
-
-## `cfm list`
-
-List configured local tunnel profiles.
-
-```bash
-cfm list
-```
-
-## `cfm start <name>`
-
-Start one detached `cloudflared` connector process.
+can upgrade to v0.2 and immediately continue:
 
 ```bash
 cfm start company-a
-```
-
-Internally, the connector is launched using the stored token file rather than placing the raw token on the command line.
-
-If the connector exits immediately, `cfm` prints recent log output to help identify the cause.
-
-## `cfm start-all`
-
-Start every configured local profile.
-
-```bash
-cfm start-all
-```
-
-Each profile is started independently. A failure in one profile is reported without hiding the result for the others.
-
-## `cfm stop <name>`
-
-Stop one managed connector process.
-
-```bash
-cfm stop company-a
-```
-
-## `cfm stop-all`
-
-Stop all managed connector processes.
-
-```bash
-cfm stop-all
-```
-
-## `cfm restart <name>`
-
-Stop and start one connector.
-
-```bash
-cfm restart company-a
-```
-
-## `cfm status [name]`
-
-Show the process state for all profiles:
-
-```bash
-cfm status
-```
-
-Example:
-
-```text
-NAME       STATUS   PID
-company-a  running  91231
-company-b  stopped  -
-```
-
-Inspect one profile:
-
-```bash
-cfm status company-a
-```
-
-`cfm` checks whether the recorded process is still alive and cleans stale runtime state when necessary.
-
-## `cfm logs <name>`
-
-Print recent connector logs:
-
-```bash
-cfm logs company-a
-```
-
-Follow the log live:
-
-```bash
-cfm logs company-a --follow
-```
-
-This is especially useful while testing webhooks, local APIs, or hostname routing through a tunnel.
-
-## `cfm doctor [name]`
-
-Run local diagnostics:
-
-```bash
-cfm doctor
-```
-
-Current checks include:
-
-- Node.js version information;
-- whether `cloudflared` exists in `PATH`;
-- configuration path;
-- token file readability;
-- token permission warnings;
-- managed process state.
-
-Inspect a single profile:
-
-```bash
-cfm doctor company-a
-```
-
-## `cfm config`
-
-Print the local configuration path:
-
-```bash
-cfm config
-```
-
-## Recommended debugging sequence
-
-When a local hostname is not working:
-
-```bash
-cfm doctor company-a
 cfm status company-a
 cfm logs company-a
 ```
 
-Then confirm that the local service itself is listening on the port configured in the Cloudflare Published Application route.
+No Account API Token or re-registration is required. The existing token file path is preserved during migration.
 
-See [Troubleshooting](./TROUBLESHOOTING.md) for more detail.
+If API management is desired later:
+
+```bash
+cfm account add company-a
+cfm tunnel adopt company-a company-a
+```
+
+See [Architecture](./ARCHITECTURE.md), [Security](./SECURITY.md), and [Troubleshooting](./TROUBLESHOOTING.md).
