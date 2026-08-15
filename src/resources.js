@@ -11,6 +11,34 @@ async function clientForAccount(config, accountAlias, { fetchImpl = globalThis.f
   return new CloudflareClient({ accountId: account.accountId, apiToken, fetchImpl });
 }
 
+function isCloudflareAuthzError(error) {
+  return [401, 403].includes(error?.status)
+    || [10000, 9109].includes(Number(error?.code))
+    || /authentication|permission|forbidden|not authorized/i.test(error?.message ?? '');
+}
+
+function cloudflareErrorDetail(error) {
+  const parts = [];
+  if (error?.status && error.status !== 200) parts.push(`HTTP ${error.status}`);
+  if (error?.code != null) parts.push(`code ${error.code}`);
+  if (error?.message) parts.push(error.message);
+  return parts.length ? ` Cloudflare response: ${parts.join(', ')}.` : '';
+}
+
+function zoneLabel(zone, hostname) {
+  return zone?.zoneName || zone?.zoneId || hostname;
+}
+
+function dnsAuthorizationError(action, hostname, zone, error) {
+  return new Error(
+    `Cloudflare ${action} authorization failed for "${hostname}" in Zone "${zoneLabel(zone, hostname)}". `
+    + 'The Account API Token can still be valid for Tunnel operations while lacking Zone/DNS access. '
+    + 'Grant Zone -> DNS -> Edit for the target Zone and ensure Zone Resources includes that Zone. '
+    + 'If automatic Zone discovery is used, also grant Zone -> Zone -> Read, or pass --zone-id <ZONE_ID> explicitly.'
+    + cloudflareErrorDetail(error),
+  );
+}
+
 export async function addAccount(alias, { accountId, apiToken, zoneId = null, fetchImpl = globalThis.fetch, paths = appPaths(), force = false } = {}) {
   validateName(alias);
   validateAccountId(accountId);
@@ -61,11 +89,44 @@ export async function showAccount(alias, paths = appPaths()) {
   return { name: alias, accountId: account.accountId, defaultZoneId: account.defaultZoneId ?? null, apiTokenFile: account.apiTokenFile };
 }
 
-export async function doctorAccount(alias, { fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
+export async function doctorAccount(alias, { hostname = null, zoneId = null, fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
   const config = await loadConfig({ paths });
+  const account = config.accounts[alias];
+  if (!account) throw new Error(`Unknown Cloudflare account alias: ${alias}`);
   const client = await clientForAccount(config, alias, { fetchImpl });
   await client.verifyAccount();
-  return true;
+
+  const result = {
+    tunnelApi: true,
+    zoneChecked: false,
+    dnsRead: null,
+    zoneId: null,
+    zoneName: null,
+    zoneSource: null,
+  };
+
+  if (!hostname) return result;
+  hostname = validateHostname(hostname);
+  const dnsZone = await resolveDnsZone(client, account, hostname, zoneId);
+  result.zoneChecked = true;
+  result.zoneId = dnsZone.zoneId;
+  result.zoneName = dnsZone.zoneName;
+  result.zoneSource = dnsZone.source;
+  try {
+    await client.listDnsRecords(dnsZone.zoneId, { name: hostname });
+    result.dnsRead = true;
+  } catch (error) {
+    if (isCloudflareAuthzError(error)) {
+      throw new Error(
+        `Cloudflare DNS access check failed for "${hostname}" in Zone "${zoneLabel(dnsZone, hostname)}". `
+        + 'Tunnel API access is valid, but this token cannot read DNS records for the target Zone. '
+        + 'Grant Zone -> DNS -> Read/Edit for that Zone and verify Zone Resources includes it.'
+        + cloudflareErrorDetail(error),
+      );
+    }
+    throw error;
+  }
+  return result;
 }
 
 export async function removeAccount(alias, { paths = appPaths(), keepToken = false } = {}) {
@@ -233,10 +294,13 @@ async function resolveDnsZone(client, account, hostname, requestedZoneId = null)
     try {
       zones = await client.listZones({ name: candidate });
     } catch (error) {
-      if (error?.status === 403) {
+      if (isCloudflareAuthzError(error)) {
         throw new Error(
-          `DNS management needs a Cloudflare Zone ID. No --zone-id or account default Zone ID is configured, and automatic zone discovery was denied by Cloudflare (403). ` +
-          'Automatic discovery requires Zone:Zone:Read for the target zone. Add that permission to the API Token or pass --zone-id <ZONE_ID>.',
+          `Automatic Cloudflare Zone discovery failed for "${hostname}". `
+          + 'The API Token is valid for Tunnel operations but does not have usable access to the target Zone. '
+          + 'Grant Zone -> Zone -> Read for that Zone, or pass --zone-id <ZONE_ID> to skip discovery. '
+          + 'If DNS records should be created or updated, also grant Zone -> DNS -> Edit.'
+          + cloudflareErrorDetail(error),
         );
       }
       throw error;
@@ -256,8 +320,8 @@ async function resolveDnsZone(client, account, hostname, requestedZoneId = null)
   }
 
   throw new Error(
-    `Could not discover a Cloudflare Zone for "${hostname}". Pass --zone-id <ZONE_ID>, configure a default Zone ID on the account, ` +
-    'or grant the API Token Zone:Zone:Read so cfm can resolve the hostname automatically.',
+    `Could not discover a Cloudflare Zone for "${hostname}". Pass --zone-id <ZONE_ID>, configure a default Zone ID on the account, `
+    + 'or grant the API Token Zone -> Zone -> Read so cfm can resolve the hostname automatically.',
   );
 }
 
@@ -285,7 +349,14 @@ export async function addRoute(accountAlias, tunnelName, { hostname, origin, zon
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   nextRules.push({ hostname, service: origin });
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-  if (manageDns) await client.upsertTunnelDns(dnsZone.zoneId, hostname, profile.tunnelId);
+  if (manageDns) {
+    try {
+      await client.upsertTunnelDns(dnsZone.zoneId, hostname, profile.tunnelId);
+    } catch (error) {
+      if (isCloudflareAuthzError(error)) throw dnsAuthorizationError('DNS record management', hostname, dnsZone, error);
+      throw error;
+    }
+  }
   return {
     hostname,
     origin,
@@ -308,7 +379,14 @@ export async function removeRoute(accountAlias, tunnelName, { hostname, zoneId =
   const normalized = normalizeIngress(current);
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-  if (manageDns) await client.deleteDnsByHostname(dnsZone.zoneId, hostname);
+  if (manageDns) {
+    try {
+      await client.deleteDnsByHostname(dnsZone.zoneId, hostname);
+    } catch (error) {
+      if (isCloudflareAuthzError(error)) throw dnsAuthorizationError('DNS record deletion', hostname, dnsZone, error);
+      throw error;
+    }
+  }
   return {
     hostname,
     dnsManaged: manageDns,
