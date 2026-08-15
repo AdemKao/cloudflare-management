@@ -2,155 +2,224 @@
 
 **English** · [繁體中文](./UPGRADING.zh-TW.md) · [日本語](./UPGRADING.ja.md)
 
-This guide explains how to update `cloudflare-management` and what happens to existing local configuration.
-
 ## Check the current version
 
 ```bash
 cfm --version
 ```
 
-## Update to the latest `main`
+## v0.3.0 bootstrap for existing v0.2.x users
 
-If you installed directly from GitHub, reinstall the package:
+`cfm upgrade` is introduced in v0.3, so v0.2.x cannot invoke it yet. Upgrade once with the existing GitHub/npm method:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
 ```
 
-This replaces the globally installed CLI package but does not remove your local `cfm` data.
-
-## Install or pin a release
+Then preview the storage migration:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm migrate --dry-run
 ```
 
-Using a tag is recommended when you want reproducible developer-machine setup.
-
-## v0.2.2 permission diagnostics
-
-v0.2.2 improves Cloudflare Zone/DNS authorization handling. Cloudflare may return `success: false` with error code `10000` (`Authentication error`) while the HTTP status is still 200. `cfm` now recognizes this response and reports whether Zone discovery or DNS record access failed.
-
-Basic account doctor checks Tunnel API access only:
+Apply it explicitly if desired:
 
 ```bash
-cfm account doctor company-a
+cfm migrate
 ```
 
-To additionally validate Zone discovery and DNS-read access for a hostname:
+Any command that loads the old config will also trigger migration automatically.
+
+## Future updates from v0.3+
+
+Use:
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com
+cfm upgrade
 ```
 
-Doctor does not modify DNS, so a successful check does not prove DNS write permission. `cfm route ... --dns` still requires DNS Edit for the target Zone.
+By default it:
 
-## v0.2.1 DNS behavior
+1. detects the install manager;
+2. resolves the latest stable GitHub Release for the current npm/GitHub distribution;
+3. previews local migration needs;
+4. asks for confirmation;
+5. updates the package;
+6. invokes `cfm migrate` using the newly installed CLI.
 
-When DNS management is requested, Zone selection is:
+Automation:
+
+```bash
+cfm upgrade --yes
+```
+
+Preview only:
+
+```bash
+cfm upgrade --dry-run
+```
+
+Development channel:
+
+```bash
+cfm upgrade --channel main
+```
+
+`main` is not a tagged stable release.
+
+## Installer support
+
+v0.3 introduces an installer abstraction.
+
+Current supported distribution:
 
 ```text
-1. --zone-id <ZONE_ID>
-2. account defaultZoneId
-3. automatic hostname-based Zone discovery
+npm executable + GitHub repository/release tags
 ```
 
-Automatic discovery uses Cloudflare `GET /zones`, so the API Token needs Zone Read for the target Zone. DNS record changes separately require DNS Edit. If you intentionally do not grant Zone Read, continue passing `--zone-id <ZONE_ID>` explicitly.
+The CLI also contains a Homebrew adapter so a future formula can use the same `cfm upgrade` UX. Until a formula/tap is actually published, do not treat Homebrew as an available install method simply because the adapter exists.
 
-## Where your local data lives
+Manager override:
 
-By default:
+```bash
+cfm upgrade --manager npm
+cfm upgrade --manager brew
+```
+
+Use overrides only when automatic detection is wrong and you know how the CLI was installed.
+
+## v0.3 storage layout
+
+v0.3 changes **credential paths**, not credential values or profile aliases.
 
 ```text
 ~/.config/cloudflare-management/
-~/.local/state/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   └── company-a/
+│       ├── api-token
+│       └── tunnels/
+│           └── project-dev.token
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
 ```
 
-These directories are outside the global npm package installation, so updating or reinstalling the CLI does not remove profiles, Account API Tokens, Tunnel Tokens, runtime state, or logs.
+API-managed credentials now live under the Cloudflare Account that owns them. Token-only profiles remain under `legacy/tunnels/` until explicit adoption.
 
-## v0.1 → v0.2 migration
+## v1/v2 → v3 migration behavior
 
-Existing v0.1 users may already have:
+Migration rules:
+
+1. preserve Account/profile aliases;
+2. preserve Account API Token and Tunnel Token values;
+3. create a metadata backup before config replacement;
+4. move Account API Tokens into `accounts/<account>/api-token`;
+5. move adopted/provisioned Tunnel Tokens into `accounts/<account>/tunnels/`;
+6. move unbound token-only profiles into `legacy/tunnels/`;
+7. atomically write schema v3;
+8. refuse to overwrite a destination credential with different contents.
+
+The migration is recoverable after interruption. A partially moved credential can be recognized on the next run even while old v1/v2 metadata still points to the source path.
+
+## Existing token-only users
+
+If you previously used:
 
 ```bash
 cfm add company-a
 cfm start company-a
 ```
 
-The first v0.2 config load:
-
-1. reads the existing v1 metadata;
-2. creates `config.v1.backup.json` before the migration write;
-3. migrates existing profiles to `managementMode: token-only`;
-4. preserves the existing profile aliases;
-5. preserves the existing Tunnel Token file paths and values;
-6. writes schema v2 atomically.
-
-You do **not** need to re-enter the Tunnel Token or add an Account API Token to keep using the old profile.
-
-After updating:
+those commands still work after v0.3:
 
 ```bash
-cfm status company-a
 cfm start company-a
+cfm status company-a
 cfm logs company-a
 ```
 
-## Optional API adoption after upgrading
+The profile alias stays `company-a`; only the local Token path moves to the v0.3 layout.
 
-If you later want `cfm` to API-manage the same existing remote Tunnel:
+## Adoption after migration
+
+If the same existing remote Tunnel should become API-managed:
 
 ```bash
 cfm account add company-a
 cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
 ```
 
-Adoption does not create a new Tunnel and does not replace the existing Tunnel Token by default.
-
-## Recommended pre-upgrade check
-
-For an important development machine:
-
-```bash
-cfm --version
-cfm status
-cfm doctor
-```
-
-You may also make your own backup of:
+The existing Token value is preserved and its file moves from:
 
 ```text
-~/.config/cloudflare-management/config.json
+legacy/tunnels/company-a.token
 ```
 
-Do not copy secret files into a public repository or shared chat.
+to:
 
-## Rollback
+```text
+accounts/company-a/tunnels/company-a.token
+```
 
-To return to the current patch release:
+Adoption does not create another remote Tunnel.
+
+## Manual install/update remains supported
+
+Install the latest `main`:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
+npm install -g github:AdemKao/cloudflare-management
 ```
 
-Be aware that once schema v2 has been written, an older CLI that only understands schema v1 may not be suitable for reading that config. Prefer forward fixes or restore a pre-migration config backup only when you understand the consequences.
+Pin v0.3.0:
 
-## Troubleshooting after an update
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
+```
+
+Local config/credentials live outside the npm package directory, so reinstalling the package does not delete them.
+
+## Recommended upgrade procedure
+
+For an important machine:
 
 ```bash
 cfm --version
-cfm doctor
 cfm status
+cfm doctor
+cfm migrate --dry-run
 ```
 
-For API/DNS mode:
+Then update and verify:
 
 ```bash
-cfm account doctor company-a --hostname api-dev.example.com
+cfm upgrade
+cfm --version
+cfm doctor
+```
+
+## Rollback considerations
+
+You can reinstall an older package tag, but once schema v3 has been written, older CLIs that only understand schema v2 may not correctly read the new config or account-scoped paths.
+
+Prefer a forward fix. Metadata backups are stored under:
+
+```text
+~/.config/cloudflare-management/backups/
+```
+
+Do not manually restore old metadata without also understanding where the credential files currently live.
+
+## Troubleshooting
+
+```bash
+cfm migrate --dry-run
+cfm upgrade --dry-run
 ```
 
 Then see [Troubleshooting](./TROUBLESHOOTING.md).
