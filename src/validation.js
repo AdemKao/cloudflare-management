@@ -27,10 +27,12 @@ export function validateZoneId(value) {
 }
 
 export function validateHostname(value) {
-  if (!value || value.length > 253 || !/^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(value)) {
-    throw new Error('Hostname must be a valid fully-qualified DNS name.');
-  }
-  return value.toLowerCase();
+  if (!value) throw new Error('Hostname is required.');
+  const wildcard = value.startsWith('*.');
+  const host = wildcard ? value.slice(2) : value;
+  const valid = host.length <= 253 && /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(host);
+  if (!valid) throw new Error('Hostname must be a valid fully-qualified DNS name (wildcard *.example.com is supported).');
+  return `${wildcard ? '*.' : ''}${host.toLowerCase()}`;
 }
 
 export function validateOrigin(value) {
