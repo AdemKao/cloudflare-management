@@ -80,6 +80,7 @@ Account API Token と Tunnel Token は別々に保存されます。
 - duplicate Tunnel を作らない explicit adoption
 - Tunnel provisioning / remote configuration
 - 任意の DNS automation
+- `--dns` で Zone ID がない場合の hostname からの Cloudflare Zone 自動検出
 - 1 コマンドの `cfm expose`
 - `0600` の secret file
 - raw Tunnel Token を process args に置かない設計
@@ -110,7 +111,7 @@ npm install -g github:AdemKao/cloudflare-management
 特定の release tag をインストール：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 確認：
@@ -132,7 +133,7 @@ cfm --version
 特定 release に固定する場合：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
@@ -164,9 +165,28 @@ cfm route add company-a project-dev \
 cfm start project-dev
 ```
 
-DNS 権限がある場合のみ `--dns` を追加してください。
+対象 Zone の DNS write 権限がある場合は `--dns` を追加できます：
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+```
+
+`--dns` 使用時の Zone ID 解決順序：
+
+```text
+1. --zone-id <ZONE_ID>
+2. Account の defaultZoneId
+3. hostname から自動検出
+```
+
+自動検出では `api-dev.example.com` → `example.com` のように full hostname から parent domain へ順番に確認し、Cloudflare `GET /zones` を利用します。そのため対象 Zone の `Zone:Zone:Read` が必要です。DNS record の作成・更新には引き続き DNS write 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示してください。
 
 ## 1 コマンドで公開：`cfm expose`
+
+`cfm expose` も同じ Zone 解決ルールを使用するため、API Token が Zone を自動検出できる場合は default Zone ID を事前設定する必要はありません：
 
 ```bash
 cfm expose company-a \
@@ -234,6 +254,7 @@ Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォル�
 - 通常コマンドは raw token を表示しない。
 - Remote Tunnel delete は確認または `--yes` が必要。
 - Account / Zone を限定した最小権限 Token を推奨。
+- Zone 自動検出が必要な場合のみ `Zone:Zone:Read` を追加し、不要なら explicit/default Zone ID を利用できます。
 
 詳細は [Security](./SECURITY.md) を参照してください。
 
