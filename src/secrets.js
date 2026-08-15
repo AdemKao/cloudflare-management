@@ -1,6 +1,12 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { appPaths, ensureDirectories } from './config.js';
+import {
+  accountApiTokenPath,
+  accountTunnelTokenPath,
+  appPaths,
+  ensureDirectories,
+  legacyTunnelTokenPath,
+} from './config.js';
 
 export async function promptHidden(label, { input = process.stdin, output = process.stdout } = {}) {
   if (!input.isTTY || typeof input.setRawMode !== 'function') {
@@ -111,11 +117,50 @@ export async function readSecret(filePath) {
 }
 
 export function accountTokenPath(name, paths = appPaths()) {
-  return path.join(paths.accountSecretsRoot, `${name}.api-token`);
+  return accountApiTokenPath(name, paths);
 }
 
-export function tunnelTokenPath(name, paths = appPaths()) {
-  return path.join(paths.tunnelSecretsRoot, `${name}.token`);
+export function tunnelTokenPath(accountAlias, name, paths = appPaths()) {
+  return accountTunnelTokenPath(accountAlias, name, paths);
+}
+
+export function unboundTunnelTokenPath(name, paths = appPaths()) {
+  return legacyTunnelTokenPath(name, paths);
+}
+
+async function fileExists(filePath) {
+  try {
+    await fsp.access(filePath);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+export async function moveSecret(source, destination) {
+  if (path.resolve(source) === path.resolve(destination)) return destination;
+  const [sourceExists, destinationExists] = await Promise.all([fileExists(source), fileExists(destination)]);
+  if (!sourceExists && !destinationExists) throw new Error(`Secret file is missing: ${source}`);
+
+  if (sourceExists && destinationExists) {
+    const [left, right] = await Promise.all([fsp.readFile(source), fsp.readFile(destination)]);
+    if (!left.equals(right)) throw new Error(`Refusing to overwrite a different secret file: ${destination}`);
+    await fsp.rm(source, { force: true });
+    await fsp.chmod(destination, 0o600).catch(() => {});
+    return destination;
+  }
+
+  if (!sourceExists && destinationExists) {
+    await fsp.chmod(destination, 0o600).catch(() => {});
+    return destination;
+  }
+
+  await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+  await fsp.chmod(path.dirname(destination), 0o700).catch(() => {});
+  await fsp.rename(source, destination);
+  await fsp.chmod(destination, 0o600);
+  return destination;
 }
 
 export async function ensureSecretStorage(paths = appPaths()) {
