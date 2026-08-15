@@ -81,6 +81,7 @@ Account API Tokens and Tunnel Tokens are stored separately.
 - **Tunnel provisioning** — list/create/show/delete remotely-managed Tunnels.
 - **Published hostname management** — configure hostname → origin rules.
 - **Optional DNS automation** — CNAME creation/removal only when requested and authorized.
+- **Automatic Zone discovery** — when `--dns` is used without a Zone ID, `cfm` can resolve the matching Cloudflare Zone from the hostname.
 - **One-command expose flow** — provision/reuse Tunnel + route + DNS + connector startup.
 - **Protected secrets** — mode-600 token files outside the repository.
 - **No raw Tunnel Token in process args** — `cloudflared tunnel run --token-file ...`.
@@ -111,7 +112,7 @@ npm install -g github:AdemKao/cloudflare-management
 Install a specific release tag:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 Verify:
@@ -133,7 +134,7 @@ cfm --version
 To upgrade to a specific release instead:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
@@ -196,6 +197,16 @@ cfm route add company-a project-dev \
   --dns
 ```
 
+When `--dns` is enabled, Zone selection follows this order:
+
+```text
+1. --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic discovery from the hostname
+```
+
+Automatic discovery queries Cloudflare Zones from the full hostname toward parent domains (for example `api-dev.example.com` → `example.com`). It requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission. If you intentionally do not grant Zone Read, provide `--zone-id <ZONE_ID>` explicitly.
+
 Finally:
 
 ```bash
@@ -204,7 +215,7 @@ cfm start project-dev
 
 ## One-command expose workflow
 
-When the account has a default Zone ID configured:
+`cfm expose` uses the same Zone selection rules, so a default Zone ID is no longer required when the API Token can discover the target Zone:
 
 ```bash
 cfm expose company-a \
@@ -222,6 +233,8 @@ reuse adopted/provisioned Tunnel
 or create one if no local profile exists
        ↓
 configure hostname → origin
+       ↓
+resolve Zone ID (explicit/default/discovered)
        ↓
 manage DNS unless --no-dns
        ↓
@@ -317,6 +330,7 @@ Key rules:
 - Normal commands do not print raw tokens.
 - Remote Tunnel deletion requires confirmation or `--yes`.
 - Use a specific Account and specific Zone scope instead of broad cross-client credentials.
+- Grant `Zone:Zone:Read` only when you want automatic Zone discovery; otherwise use an explicit/default Zone ID.
 
 Read [Security](./docs/SECURITY.md) for the full model.
 
@@ -346,7 +360,7 @@ npm link
 npm run check
 ```
 
-The test suite includes migration, backward-compatibility, Cloudflare API error-path, secret-leakage, alias coexistence, duplicate-prevention, and adoption tests using mocked API responses.
+The test suite includes migration, backward-compatibility, Cloudflare API error paths, secret-leakage checks, alias coexistence, duplicate prevention, adoption, and automatic Zone discovery using mocked API responses.
 
 ## Scope
 
