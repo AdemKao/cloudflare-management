@@ -1,0 +1,40 @@
+{
+  "name": "cloudflare-management",
+  "version": "0.1.0",
+  "description": "A small local CLI for managing multiple Cloudflare Tunnel connectors across client accounts.",
+  "type": "module",
+  "bin": {
+    "cfm": "./bin/cfm.js",
+    "cloudflare-management": "./bin/cfm.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check bin/cfm.js && node --check src/cli.js",
+    "check": "npm run lint && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cloudflare",
+    "cloudflared",
+    "tunnel",
+    "cli",
+    "webhook",
+    "development"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdemKao/cloudflare-management.git"
+  },
+  "homepage": "https://github.com/AdemKao/cloudflare-management#readme",
+  "bugs": {
+    "url": "https://github.com/AdemKao/cloudflare-management/issues"
+  },
+  "license": "UNLICENSED"
+}
