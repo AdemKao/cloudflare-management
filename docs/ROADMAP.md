@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap describes the current direction for `cloudflare-management`. It is not a promise that every item will ship exactly as written.
+This roadmap describes the current direction for `cloudflare-management`.
 
 The project should remain a small, auditable management layer around Cloudflare's official APIs and the official `cloudflared` connector.
 
@@ -21,16 +21,15 @@ Completed:
 - [x] local diagnostics;
 - [x] XDG-compatible paths;
 - [x] CI and tests;
-- [x] multilingual documentation;
-- [x] architecture/security documentation.
-
-The v0.1 security model intentionally requires an existing remotely-managed Tunnel and only stores the Tunnel-specific connector token locally.
+- [x] multilingual documentation.
 
 ## v0.2 — Optional Cloudflare API provisioning
 
 Tracking issue: #3
 
-v0.2 promotes the domain model from one local Tunnel profile to explicit Cloudflare resource boundaries:
+Implementation PR: #5
+
+Domain model:
 
 ```text
 Account
@@ -39,59 +38,59 @@ Account
        └── Connector
 ```
 
-The existing v0.1 Tunnel Token workflow remains supported. Account API mode is optional.
-
-A user who already ran:
-
-```bash
-cfm add company-a
-```
-
-must be able to upgrade without re-adding the profile, re-entering the Tunnel Token, creating another Tunnel, or providing an Account API Token.
-
-See [v0.2 API Management Design](./V0.2_API_MANAGEMENT.md) for the detailed proposal.
+The original Tunnel Token workflow remains supported. Account API mode is optional.
 
 ### Phase 1 — Account API foundation and safe v1 migration
 
-- [ ] config schema v2 with backward-compatible v1 migration;
-- [ ] back up config metadata before the first migration write;
-- [ ] migrate existing v1 profiles as `token-only` records;
-- [ ] preserve existing profile names and Tunnel Token file paths;
-- [ ] keep existing `cfm add/start/stop/restart/status/logs/doctor` behavior unchanged;
-- [ ] make migration atomic, recoverable, and idempotent;
-- [ ] separate secure Account API Token storage;
-- [ ] `cfm account add/list/show/remove/doctor`;
-- [ ] allow Account aliases and existing Tunnel/profile aliases to use the same friendly name because they are different resource namespaces;
-- [ ] small Cloudflare API adapter with normalized timeouts/errors;
-- [ ] validate Account ID and API Token during setup;
-- [ ] unit tests for migration, recovery, backward compatibility, and credential handling.
+Implemented:
+
+- [x] config schema v2;
+- [x] automatic backward-compatible v1 migration;
+- [x] metadata backup before the first migration write;
+- [x] existing v1 profiles migrate as `token-only`;
+- [x] existing profile names and Tunnel Token file paths are preserved;
+- [x] existing `cfm add/start/stop/restart/status/logs/doctor` commands remain available;
+- [x] atomic/idempotent config migration;
+- [x] separate Account API Token storage;
+- [x] `cfm account add/list/show/remove/doctor`;
+- [x] Account alias and Tunnel/profile alias namespaces can coexist;
+- [x] Cloudflare API adapter with timeout/error normalization;
+- [x] Account ID / API Token validation during setup;
+- [x] migration and credential unit tests.
 
 ### Phase 2 — Tunnel provisioning and adoption
 
-- [ ] `cfm tunnel list <account>`;
-- [ ] `cfm tunnel create <account> <name>`;
-- [ ] persist returned Tunnel ID and Tunnel Token securely;
-- [ ] `cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]`;
-- [ ] adoption supports an interactive remote Tunnel selection;
-- [ ] adoption must never create a duplicate Tunnel;
-- [ ] adoption preserves the existing Tunnel Token by default;
-- [ ] distinguish `token-only`, `adopted`, and `provisioned` Tunnel records;
-- [ ] `cfm tunnel show`;
-- [ ] `cfm tunnel token`;
-- [ ] safe `cfm tunnel delete` with explicit confirmation;
-- [ ] Cloudflare API contract/failure-path tests.
+Implemented:
+
+- [x] `cfm tunnel list <account>`;
+- [x] `cfm tunnel create <account> <name>`;
+- [x] Tunnel ID and Tunnel Token persistence;
+- [x] `cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]`;
+- [x] duplicate local-profile provisioning prevention;
+- [x] adoption preserves the existing Tunnel Token by default;
+- [x] `token-only`, `adopted`, and `provisioned` states;
+- [x] `cfm tunnel show`;
+- [x] safe Tunnel Token refresh without printing the raw token;
+- [x] remote Tunnel delete with confirmation / `--yes`;
+- [x] mocked Cloudflare API failure-path tests.
+
+Current adoption behavior uses a unique remote-name match when possible and supports an explicit `--tunnel-id` when matching is ambiguous.
 
 ### Phase 3 — Route and DNS provisioning
 
-- [ ] remote Tunnel hostname → origin configuration;
-- [ ] `cfm route list/add/remove`;
-- [ ] optional DNS record provisioning when Zone DNS permission is available;
-- [ ] allow Tunnel creation/adoption without DNS privileges;
-- [ ] hostname and origin validation.
+Implemented:
+
+- [x] remote Tunnel hostname → origin configuration;
+- [x] `cfm route list/add/remove`;
+- [x] optional DNS CNAME upsert/removal;
+- [x] Tunnel creation/adoption without DNS privileges;
+- [x] Account default Zone ID and per-command `--zone-id` override;
+- [x] hostname, wildcard-hostname, origin, Account ID, Zone ID, and Tunnel ID validation;
+- [x] DNS is changed only when explicitly requested by route commands.
 
 ### Phase 4 — Convenience workflow
 
-Evaluate a higher-level command such as:
+Implemented:
 
 ```bash
 cfm expose company-a \
@@ -100,98 +99,60 @@ cfm expose company-a \
   --port 3001
 ```
 
-Potential flow:
+Flow:
 
 ```text
 Account validation
-  → choose an existing adopted/provisioned Tunnel OR explicitly create one
-  → Tunnel Token storage/retention
-  → route configuration
-  → optional DNS provisioning
-  → connector startup
-  → public URL/status output
+  → reuse adopted/provisioned Tunnel when present
+  → create Tunnel only when the local profile does not exist
+  → configure route
+  → DNS by default (disable with --no-dns)
+  → connector startup by default (disable with --no-start)
+  → output public URL/status
 ```
 
-`cfm expose` must not silently create another Tunnel when a compatible existing profile already exists.
+Safety behavior:
 
-## v0.2 security constraints
+- [x] token-only profiles are never silently adopted;
+- [x] a local profile name collision never causes a duplicate Tunnel creation;
+- [x] a newly-created Tunnel is rolled back when route/DNS provisioning fails;
+- [x] connector startup failure does not silently destroy already-provisioned remote resources.
 
-Account API mode must follow least privilege.
+## v0.2 release validation
 
-For Tunnel provisioning, the intended permission is scoped to the specific Cloudflare Account:
+Code phases 1–4 are implemented in PR #5. Before tagging/releasing v0.2.0, complete a manual smoke test against a real scoped Cloudflare account:
 
-```text
-Account → Cloudflare Tunnel → Edit
-```
+- [ ] `cfm account add` using a least-privilege API Token;
+- [ ] create a real test Tunnel;
+- [ ] configure a test hostname route;
+- [ ] verify optional DNS provisioning;
+- [ ] start the connector and confirm public reachability;
+- [ ] adopt a pre-existing Tunnel/profile;
+- [ ] delete the temporary remote Tunnel;
+- [ ] verify an existing v0.1 config upgrades without re-entering its Tunnel Token.
 
-For optional DNS provisioning:
+This live smoke test is intentionally separate from the automated suite because CI must not contain real client Cloudflare credentials.
 
-```text
-Zone → DNS → Edit
-```
+## Security constraints
 
-The CLI should not require `All accounts`, `All zones`, or one shared unrestricted token across unrelated companies.
+- Account API mode remains optional.
+- Account API Tokens and Tunnel Tokens are separate credentials.
+- Secret files use restrictive local permissions.
+- Raw credentials are not stored in config metadata or normal CLI output.
+- Use specific Account and Zone scopes; do not centralize unrestricted credentials across unrelated clients.
+- Remote Tunnel deletion requires explicit confirmation.
+- Existing token-only profiles do not become API-managed implicitly.
 
-Tunnel Token-only users should never be forced to provide an Account-level API Token.
+## Next candidates
 
-An existing token-only profile should never become API-managed automatically. Adoption requires explicit user action and explicit selection of the matching remote Tunnel.
-
-## Near-term developer experience candidates
-
-### Better diagnostics
-
-Potential additions to `cfm doctor`:
-
-- verify the configured localhost origin is listening;
-- optional public-hostname reachability check;
-- detect stale or duplicate `cloudflared` connector processes;
-- clearer exit codes for automation.
-
-### Machine-readable output
-
-```bash
-cfm status --json
-cfm doctor --json
-```
-
-### Shell completion
-
-Potential support for:
-
-- zsh;
-- bash;
-- fish.
-
-### Safer profile editing
-
-Possible commands:
-
-```bash
-cfm rename company-a company-a-new
-cfm token rotate company-a
-```
-
-## Distribution candidates
-
-Once the CLI stabilizes:
-
-- npm registry release;
-- automated semantic/versioned releases;
-- GitHub Releases and changelog;
-- potentially a Homebrew formula if there is enough demand.
-
-## Documentation and developer experience
-
-Potential improvements:
-
-- terminal GIF/asciinema demonstration;
-- more troubleshooting scenarios;
-- release documentation;
-- translated command/reference docs where useful;
-- webhook development examples;
-- Account API Token setup guide for v0.2;
-- upgrade guide for users who already ran `cfm add <profile>`;
-- adoption guide for attaching an existing remote Tunnel without duplication.
+- richer `doctor` connectivity checks;
+- JSON/machine-readable output;
+- zsh/bash/fish completion;
+- macOS Keychain / 1Password optional secret backends;
+- npm registry publishing and automated releases;
+- Homebrew formula when useful;
+- terminal GIF/asciinema demos;
+- more Cloudflare API integration tests as upstream behavior evolves.
 
 ## Non-goals
 
@@ -199,12 +160,10 @@ The project does not aim to:
 
 - replace `cloudflared`;
 - implement the Cloudflare Tunnel protocol;
-- become a full Cloudflare account administration dashboard;
+- become a general-purpose Cloudflare administration CLI;
 - centralize multiple clients' unrestricted credentials;
 - require API provisioning for the basic Tunnel Token workflow;
-- auto-adopt or silently mutate existing remote Tunnels;
-- create duplicate Tunnels simply because a user upgraded from v0.1;
+- auto-adopt or silently mutate unrelated remote Tunnels;
+- create duplicate Tunnels merely because a user upgraded from v0.1;
 - bypass Cloudflare account/security boundaries;
 - prefer Global API Keys over scoped API Tokens.
-
-These boundaries are intentional and should remain visible in future design discussions.
