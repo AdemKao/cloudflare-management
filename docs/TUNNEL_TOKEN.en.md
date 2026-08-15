@@ -2,11 +2,11 @@
 
 **English** · [繁體中文](./TUNNEL_TOKEN.zh-TW.md) · [日本語](./TUNNEL_TOKEN.ja.md)
 
-`cfm` v0.1 uses a **Cloudflare Tunnel Token**, not a general Cloudflare **API Token** from your profile settings.
+`cfm` **Tunnel Token mode** uses a Cloudflare Tunnel Token. This is a different credential from the **API Token** used by Account API mode.
 
-A Tunnel Token authorizes a `cloudflared` connector to run one specific remotely-managed Tunnel. The token is already associated with that Tunnel, so `cfm` does not need a separate Cloudflare Account ID.
+A Tunnel Token authorizes a `cloudflared` connector to run one specific remotely-managed Tunnel. It is already associated with that Tunnel, so `cfm add <profile>` does not need a separate Cloudflare Account ID.
 
-> Treat a Tunnel Token as a secret. Anyone who has the token can run a connector for that Tunnel. Do not paste it into issues, pull requests, public chat channels, screenshots, or Git commits.
+> Treat a Tunnel Token as a secret. Anyone who has it can run a connector for that Tunnel. Do not paste it into issues, pull requests, public chat channels, screenshots, or Git commits.
 
 ## Where do I get it in the current Cloudflare Dashboard?
 
@@ -36,7 +36,7 @@ Official Cloudflare documentation:
 
 ## Example
 
-Cloudflare will show a command similar to:
+Cloudflare may show:
 
 ```bash
 cloudflared tunnel run --token eyJ...
@@ -48,25 +48,19 @@ You need only:
 eyJ...
 ```
 
-Do not paste the entire installation command into `cfm`.
-
 Add a local profile:
 
 ```bash
 cfm add company-a
 ```
 
-The CLI prompts with:
-
-```text
-Tunnel token: ************
-```
-
-Paste the `eyJ...` token and press Enter.
+The CLI prompts for the token without echoing the raw value.
 
 ## If you do not have a Tunnel yet
 
-Create a remotely-managed Tunnel first:
+v0.2 supports two paths.
+
+### Option A: create it in the Cloudflare Dashboard
 
 ```text
 Cloudflare Dashboard
@@ -75,15 +69,27 @@ Cloudflare Dashboard
 → Create a tunnel
 ```
 
-After creation, open:
+Then open **Overview → Add a replica**, copy the Tunnel Token, and run:
 
-```text
-Tunnel
-→ Overview
-→ Add a replica
+```bash
+cfm add company-a
 ```
 
-and obtain the token.
+### Option B: create it directly with `cfm`
+
+Register a least-privilege Account API credential:
+
+```bash
+cfm account add company-a
+```
+
+Then create a Tunnel:
+
+```bash
+cfm tunnel create company-a project-dev
+```
+
+`cfm` retrieves and stores the Tunnel Token securely, so no manual Dashboard copy is required.
 
 Official setup guide:
 
@@ -91,23 +97,7 @@ Official setup guide:
 
 ## Multiple Cloudflare accounts
 
-Get a separate Tunnel Token from each company's own Cloudflare account:
-
-```text
-Company A Cloudflare Account
-└── company-a-dev
-    └── Tunnel Token A
-
-Company B Cloudflare Account
-└── company-b-dev
-    └── Tunnel Token B
-
-Company C Cloudflare Account
-└── company-c-dev
-    └── Tunnel Token C
-```
-
-Then add them independently:
+Use separate credentials for each company's Cloudflare Account:
 
 ```bash
 cfm add company-a
@@ -115,19 +105,17 @@ cfm add company-b
 cfm add company-c
 ```
 
-The local tokens are stored separately, and you do not need to repeatedly switch `cloudflared tunnel login` credentials.
+or, for Account API mode, create separate Account aliases and scoped API Tokens. Do not use one unrestricted credential across unrelated clients.
 
 ## Core Dashboard vs Cloudflare One Dashboard
 
-Cloudflare added first-class Tunnel management to the main Cloudflare Dashboard in 2026.
-
-For public applications, webhooks, and local development with `cfm`, use:
+For public applications, webhooks, and local development, Tunnel management is available at:
 
 ```text
 Networking → Tunnels
 ```
 
-For Zero Trust Access, private applications, or private networks, connectors can also be managed in the Cloudflare One Dashboard:
+For Zero Trust/private-network use cases, connectors can also be managed in Cloudflare One:
 
 ```text
 Zero Trust → Networks → Connectors
@@ -139,12 +127,12 @@ Cloudflare announcement:
 
 ## Tunnel Token vs API Token
 
-| Credential | Needed by v0.1 | Purpose |
-|---|---:|---|
-| Tunnel Token | ✅ Yes | Run a specific remotely-managed Tunnel connector |
-| Cloudflare API Token | ❌ No | Create/manage Tunnels, DNS, routes, and other Cloudflare resources through the API |
+| Credential | Tunnel Token mode | Account API mode | Purpose |
+|---|---:|---:|---|
+| Tunnel Token | ✅ Required | ✅ Retrieved/stored by `cfm` | Run one remotely-managed Tunnel connector |
+| Cloudflare API Token | ❌ Not required | ✅ Required | Create/manage Tunnels, routes, and optionally DNS through the API |
 
-`cfm` v0.1 intentionally avoids high-privilege Cloudflare API tokens to reduce credential exposure and preserve account isolation between clients.
+If you only need to run an existing Tunnel, Tunnel Token mode remains the lowest-privilege workflow.
 
 ## Rotate a Tunnel Token
 
@@ -157,7 +145,11 @@ Networking
 → Rotate token
 ```
 
-New connector sessions should then use the replacement Tunnel Token.
+For an API-managed local profile, sync the current Tunnel Token without printing it:
+
+```bash
+cfm tunnel token company-a project-dev
+```
 
 Official rotation guide:
 
@@ -168,12 +160,15 @@ Official rotation guide:
 - Never commit a Tunnel Token.
 - Do not put it in README files, `.env.example`, or shell scripts.
 - Do not paste it into issues or pull requests.
-- Keep a separate Tunnel/token security boundary for each independent company.
-- `cfm` stores token files under `~/.config/cloudflare-management/secrets/` with mode `0600`.
-- `cfm start` uses `cloudflared tunnel run --token-file ...`, avoiding the raw token in the process command line.
+- Keep separate client security boundaries.
+- Secret files are stored outside the repository with restrictive permissions.
+- `cfm start` uses `cloudflared tunnel run --token-file ...`.
+- Account API Tokens and Tunnel Tokens are stored separately.
 
 Related documentation:
 
+- [English README](./README.en.md)
+- [Upgrade guide](./UPGRADING.en.md)
 - [Security](./SECURITY.md)
 - [Configuration](./CONFIGURATION.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
