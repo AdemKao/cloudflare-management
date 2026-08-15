@@ -65,7 +65,16 @@ Account API Tokens are used only inside HTTPS API request headers and must never
 
 For Tunnel provisioning, use an API Token restricted to the specific client/company Cloudflare Account with the minimum Tunnel-management permission required by Cloudflare.
 
-If DNS automation is needed, add DNS edit permission only for the required Zone(s).
+DNS-related permissions are intentionally split:
+
+```text
+Automatic Zone discovery  → Zone:Zone:Read on the target Zone
+DNS record mutation       → DNS write permission on the target Zone
+```
+
+`Zone:Zone:Read` is only needed when `cfm` must discover the Zone ID from a hostname. If a user supplies `--zone-id <ZONE_ID>` or configures an account `defaultZoneId`, Zone discovery is skipped and the token does not need Zone listing permission for that step.
+
+If DNS automation is needed, add DNS write permission only for the required Zone(s). Avoid granting broader Zone permissions merely to make discovery convenient.
 
 Avoid:
 
@@ -120,7 +129,7 @@ Adoption records the Account/Tunnel relationship but preserves the existing Tunn
 Remote Tunnel deletion requires explicit confirmation or `--yes`:
 
 ```bash
-cfm tunnel delete company-a solana-dev --yes
+cfm tunnel delete company-a project-dev --yes
 ```
 
 Local `cfm remove <profile>` remains a local-only operation and does not delete the remote Cloudflare Tunnel.
@@ -135,6 +144,8 @@ Never print or persist:
 - API request objects containing secrets.
 
 Cloudflare API errors are normalized before being displayed. Tests cover common 401/403/404/409/429/5xx failure paths and verify that token values are not included in errors.
+
+Zone auto-discovery permission failures are converted into actionable guidance without printing the API Token or Authorization header.
 
 Connector logs may still contain hostnames, request metadata, network errors, or client-specific operational data. Review logs before sharing them publicly.
 
