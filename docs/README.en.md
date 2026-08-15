@@ -76,6 +76,7 @@ Account API Tokens and Tunnel Tokens are stored separately.
 - explicit Tunnel adoption without duplication;
 - Tunnel provisioning and remote configuration;
 - optional DNS automation;
+- automatic Cloudflare Zone discovery from the hostname when `--dns` is used without a Zone ID;
 - one-command `cfm expose` workflow;
 - mode-`0600` secret files;
 - raw Tunnel Tokens kept out of process args;
@@ -106,7 +107,7 @@ npm install -g github:AdemKao/cloudflare-management
 Specific release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 Verify:
@@ -128,7 +129,7 @@ cfm --version
 Or pin a release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
@@ -158,9 +159,28 @@ cfm route add company-a project-dev \
 cfm start project-dev
 ```
 
-Use `--dns` only when the API Token has DNS permission for the required Zone.
+Use `--dns` when the API Token also has DNS write permission for the target Zone:
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+```
+
+With `--dns`, Zone selection follows this order:
+
+```text
+1. --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic discovery from the hostname
+```
+
+Automatic discovery walks from the full hostname toward parent domains, for example `api-dev.example.com` → `example.com`, and calls Cloudflare `GET /zones`. It therefore requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission. If you do not want to grant Zone Read, pass `--zone-id <ZONE_ID>` explicitly.
 
 ## One-command expose workflow
+
+`cfm expose` uses the same Zone selection rules, so a default Zone ID is no longer mandatory when the token can discover the target Zone:
 
 ```bash
 cfm expose company-a \
@@ -228,6 +248,7 @@ See [Command Reference](./COMMANDS.md).
 - Normal commands do not print raw tokens.
 - Remote Tunnel deletion requires confirmation or `--yes`.
 - Prefer specific Account/Zone scopes over broad cross-client credentials.
+- Grant `Zone:Zone:Read` only if you want automatic Zone discovery; otherwise provide an explicit/default Zone ID.
 
 See [Security](./SECURITY.md).
 
