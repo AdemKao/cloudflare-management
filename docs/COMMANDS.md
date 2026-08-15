@@ -92,7 +92,7 @@ cfm tunnel list company-a
 ### Create a Tunnel
 
 ```bash
-cfm tunnel create company-a solana-dev
+cfm tunnel create company-a project-dev
 ```
 
 This creates a remotely-managed Tunnel through the Cloudflare API, retrieves its Tunnel Token, stores the token locally with restrictive permissions, and creates a `provisioned` local profile.
@@ -117,8 +117,8 @@ Adoption changes the local profile from `token-only` to `adopted` and records th
 ### Show or refresh Tunnel credentials
 
 ```bash
-cfm tunnel show company-a solana-dev
-cfm tunnel token company-a solana-dev
+cfm tunnel show company-a project-dev
+cfm tunnel token company-a project-dev
 ```
 
 `cfm tunnel token` refreshes the Tunnel Token into its protected local file. It intentionally does not print the raw token.
@@ -126,13 +126,13 @@ cfm tunnel token company-a solana-dev
 ### Delete a remotely-managed Tunnel
 
 ```bash
-cfm tunnel delete company-a solana-dev
+cfm tunnel delete company-a project-dev
 ```
 
 The command requires explicit confirmation. Automation may use:
 
 ```bash
-cfm tunnel delete company-a solana-dev --yes
+cfm tunnel delete company-a project-dev --yes
 ```
 
 This is different from `cfm remove`, which only removes local state.
@@ -142,7 +142,7 @@ This is different from `cfm remove`, which only removes local state.
 ### List routes
 
 ```bash
-cfm route list company-a solana-dev
+cfm route list company-a project-dev
 ```
 
 ### Add/update hostname → origin
@@ -150,37 +150,64 @@ cfm route list company-a solana-dev
 Without DNS mutation:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
 ```
 
 Also create/update the DNS CNAME:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+```
+
+When `--dns` is enabled, `cfm` resolves the Zone ID in this order:
+
+```text
+1. --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic hostname-based Zone discovery
+```
+
+Automatic discovery checks the full hostname and then parent domains until a matching Cloudflare Zone is found, for example:
+
+```text
+api-dev.example.com
+       ↓
+example.com
+```
+
+Automatic discovery uses Cloudflare `GET /zones` and therefore requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission.
+
+If you intentionally do not grant Zone Read, provide the Zone explicitly:
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns \
   --zone-id <ZONE_ID>
 ```
 
-If the account has a default Zone ID, `--zone-id` can be omitted.
-
 ### Remove a route
 
 ```bash
-cfm route remove company-a solana-dev \
-  --hostname webhook-dev.example.com
+cfm route remove company-a project-dev \
+  --hostname api-dev.example.com
 ```
 
-Also remove matching DNS records:
+Also remove matching DNS records. The same Zone resolution rules apply:
 
 ```bash
-cfm route remove company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route remove company-a project-dev \
+  --hostname api-dev.example.com \
   --dns
 ```
+
+Use `--zone-id <ZONE_ID>` to bypass automatic Zone discovery.
 
 ## `cfm expose` — Phase 4 convenience flow
 
@@ -188,8 +215,8 @@ Create or reuse a managed Tunnel, configure a route/DNS, and start the connector
 
 ```bash
 cfm expose company-a \
-  --name solana-dev \
-  --hostname webhook-dev.example.com \
+  --name project-dev \
+  --hostname api-dev.example.com \
   --port 3001
 ```
 
@@ -197,18 +224,20 @@ Equivalent origin form:
 
 ```bash
 cfm expose company-a \
-  --name solana-dev \
-  --hostname webhook-dev.example.com \
+  --name project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
 ```
 
 Options:
 
 ```text
---zone-id <id>   Override the account default Zone ID
+--zone-id <id>   Explicitly select a Zone and bypass auto-discovery
 --no-dns         Configure Tunnel route only; do not touch DNS
 --no-start       Provision/configure only; do not start cloudflared
 ```
+
+Without `--zone-id`, `cfm expose` uses the account default Zone ID when configured and otherwise attempts hostname-based Zone discovery.
 
 `cfm expose` reuses only `adopted` or `provisioned` profiles. A `token-only` profile must be explicitly adopted first; the convenience command will not silently attach or replace an existing Tunnel.
 
