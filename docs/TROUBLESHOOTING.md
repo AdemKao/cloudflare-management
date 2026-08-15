@@ -18,6 +18,23 @@ Account API diagnostics:
 cfm account doctor company-a
 ```
 
+This basic Account doctor validates Tunnel API access only. To also validate Zone discovery and DNS-read access for a hostname:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+If you already know the Zone ID:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com \
+  --zone-id <ZONE_ID>
+```
+
+Doctor does not mutate DNS records, so it cannot prove DNS write permission.
+
 ## `cloudflared` is not found
 
 Confirm:
@@ -65,6 +82,62 @@ Then restart:
 cfm restart project-dev
 ```
 
+## `cfm account doctor` says Tunnel API is OK but DNS still fails
+
+This is expected when the API Token has Account-level Tunnel permission but lacks Zone-level access.
+
+These permission areas are independent:
+
+```text
+Tunnel operations         → Account-level Tunnel permission
+Automatic Zone discovery  → Zone read permission
+DNS record mutation       → Zone-level DNS edit permission
+```
+
+Use:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+to validate Zone discovery and DNS-read access. A successful result still does not guarantee DNS write permission because doctor intentionally does not mutate DNS records.
+
+## `Error: Authentication error` / Cloudflare code `10000`
+
+Cloudflare may return an API response with:
+
+```text
+HTTP status: 200
+success: false
+error code: 10000
+message: Authentication error
+```
+
+v0.2.2 recognizes this as an authentication/authorization failure instead of treating the HTTP 200 as success.
+
+If the failure happens during automatic Zone discovery, check:
+
+```text
+Zone -> Zone -> Read
+Zone Resources -> target Zone
+```
+
+Or bypass discovery with:
+
+```bash
+--zone-id <ZONE_ID>
+```
+
+If the failure happens while reading/creating/updating DNS records, check:
+
+```text
+Zone -> DNS -> Edit
+Zone Resources -> target Zone
+```
+
+Passing `--zone-id` does **not** bypass the DNS edit requirement.
+
 ## Account API returns 401
 
 Run:
@@ -89,8 +162,8 @@ Keep the permission areas separate:
 
 ```text
 Tunnel operations         → Account-level Tunnel permission
-Automatic Zone discovery  → Zone:Zone:Read
-DNS record mutation       → Zone-level DNS write permission
+Automatic Zone discovery  → Zone read permission
+DNS record mutation       → Zone-level DNS edit permission
 ```
 
 If you only need Tunnel/route configuration, do not request DNS mutation:
@@ -101,7 +174,7 @@ cfm route add company-a project-dev \
   --url http://localhost:3001
 ```
 
-If DNS mutation is required but you intentionally do not grant `Zone:Zone:Read`, bypass discovery with an explicit Zone ID:
+If DNS mutation is required but you intentionally do not grant Zone Read, bypass discovery with an explicit Zone ID:
 
 ```bash
 cfm route add company-a project-dev \
@@ -209,7 +282,7 @@ Do not delete or replace the existing Tunnel Token while diagnosing migration pr
 
 ## `cfm route ... --dns` says Zone discovery was denied
 
-Starting with v0.2.1, `cfm` can discover the Zone automatically when neither `--zone-id` nor an account `defaultZoneId` is configured.
+Starting with v0.2.1, `cfm` can discover the Zone automatically when neither `--zone-id` nor an account `defaultZoneId` is configured. v0.2.2 improves authorization detection and error messages.
 
 The resolution order is:
 
@@ -219,11 +292,11 @@ The resolution order is:
 3. automatic hostname-based Zone discovery
 ```
 
-Automatic discovery calls Cloudflare `GET /zones` and requires `Zone:Zone:Read` for the target Zone. If the token lacks that permission, `cfm` returns an actionable 403 message before changing the Tunnel route.
+Automatic discovery calls Cloudflare `GET /zones` and requires Zone read access for the target Zone. If the token lacks that permission, `cfm` returns actionable guidance before changing the Tunnel route.
 
 You have three choices:
 
-1. grant narrowly-scoped `Zone:Zone:Read` for the target Zone;
+1. grant narrowly-scoped Zone Read for the target Zone;
 2. pass `--zone-id <ZONE_ID>` explicitly;
 3. omit `--dns` and manage DNS separately.
 
@@ -415,6 +488,12 @@ For API issues also include sanitized output from:
 
 ```bash
 cfm account show <account>
+```
+
+For Zone/DNS issues, include the sanitized command shape and the output of:
+
+```bash
+cfm account doctor <account> --hostname <hostname>
 ```
 
 Never post Tunnel Tokens, Account API Tokens, Authorization headers, client secrets, or sensitive private hostnames in public issues.
