@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap describes the current direction for `cloudflare-management`. It is not a promise that every item will ship exactly as written.
+This roadmap describes the current direction for `cloudflare-management`. It is not a promise that every future item will ship exactly as written.
 
 The project should remain a small, auditable management layer around Cloudflare's official APIs and the official `cloudflared` connector.
 
@@ -9,105 +9,110 @@ The project should remain a small, auditable management layer around Cloudflare'
 Completed:
 
 - [x] installable Node.js CLI;
-- [x] `cfm` executable and long-form alias;
-- [x] multiple independent client profiles;
-- [x] hidden interactive Tunnel Token input;
-- [x] token-file import;
-- [x] local secret files with restrictive permissions;
-- [x] `cloudflared` startup through `--token-file`;
-- [x] start/stop/restart/status;
-- [x] start-all/stop-all;
-- [x] logs and log following;
-- [x] local diagnostics;
+- [x] multiple local Tunnel Token profiles;
+- [x] protected local secret files;
+- [x] `cloudflared` lifecycle management;
+- [x] status/logs/diagnostics;
 - [x] XDG-compatible paths;
-- [x] CI and tests;
-- [x] multilingual documentation;
-- [x] architecture/security documentation.
+- [x] CI/tests and multilingual documentation.
 
 ## v0.2 — Optional Cloudflare API provisioning
 
 Tracking issue: #3
 
+Completed:
+
+- [x] schema v2 and v1 migration;
+- [x] optional Account API credential mode;
+- [x] Account / Tunnel / Route resource model;
+- [x] `token-only`, `adopted`, `provisioned` states;
+- [x] Tunnel create/list/show/delete/token refresh;
+- [x] explicit adoption without duplicate Tunnel creation;
+- [x] route and optional DNS management;
+- [x] automatic Zone discovery;
+- [x] permission-aware Account/Zone/DNS diagnostics;
+- [x] `cfm expose` orchestration;
+- [x] GitHub Release automation and multilingual upgrade documentation.
+
+## v0.3 — Account-scoped storage and lifecycle commands
+
+Tracking issue: #9
+
 Completed implementation scope:
 
-### Phase 1 — Account API foundation and safe v1 migration
+### Storage schema v3
 
-- [x] config schema v2 with backward-compatible v1 migration;
-- [x] metadata backup before the first migration write;
-- [x] existing v1 profiles migrate as `token-only`;
-- [x] existing profile names and Tunnel Token paths are preserved;
-- [x] migration is atomic and idempotent;
-- [x] secure Account API Token storage;
-- [x] `cfm account add/list/show/remove/doctor`;
-- [x] Account aliases and Tunnel/profile aliases use separate namespaces;
-- [x] Cloudflare API adapter with normalized errors;
-- [x] Account ID/API Token validation;
-- [x] migration/backward-compatibility tests.
+- [x] each API-managed Cloudflare Account has its own local directory;
+- [x] Account API Token stored at `accounts/<account>/api-token`;
+- [x] adopted/provisioned Tunnel Tokens stored at `accounts/<account>/tunnels/<profile>.token`;
+- [x] unbound token-only profiles stored at `legacy/tunnels/<profile>.token`;
+- [x] runtime/log state remains separate from credential storage.
 
-### Phase 2 — Tunnel provisioning and adoption
+### v1/v2 → v3 migration
 
-- [x] `cfm tunnel list <account>`;
-- [x] `cfm tunnel create <account> <name>`;
-- [x] persist Tunnel ID and Tunnel Token securely;
-- [x] `cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]`;
-- [x] adoption does not create duplicate Tunnels;
-- [x] adoption preserves existing Tunnel Token by default;
-- [x] distinguish `token-only`, `adopted`, and `provisioned` records;
-- [x] `cfm tunnel show`;
-- [x] `cfm tunnel token`;
-- [x] safe `cfm tunnel delete` confirmation;
-- [x] API failure-path tests.
+- [x] direct migration from v1 or v2 to schema v3;
+- [x] `cfm migrate --dry-run` preview;
+- [x] `cfm migrate` explicit execution;
+- [x] automatic migration when an old config is loaded;
+- [x] version-specific metadata backups under `backups/`;
+- [x] Account/profile aliases preserved;
+- [x] credential values preserved while paths move;
+- [x] recoverable partial relocation;
+- [x] idempotent repeated migration;
+- [x] conflicting destination credential protection;
+- [x] old v0.2 `config.v1.backup.json` preserved into the backup directory where possible.
 
-### Phase 3 — Route and DNS provisioning
+### Adoption and storage boundary
 
-- [x] remote Tunnel hostname → origin configuration;
-- [x] `cfm route list/add/remove`;
-- [x] optional DNS record provisioning/removal;
-- [x] Tunnel/route management without DNS privilege when DNS mutation is not requested;
-- [x] hostname/origin validation.
+- [x] token-only profiles remain unbound after migration;
+- [x] explicit adoption moves the existing Token into the selected Account directory;
+- [x] adoption keeps the Token value and remote Tunnel identity;
+- [x] duplicate remote Tunnel/local attachment protections remain.
 
-### Phase 4 — Convenience workflow
+### Self-upgrade architecture
 
-- [x] `cfm expose`;
-- [x] reuse adopted/provisioned Tunnel;
-- [x] create only when no local profile exists;
-- [x] never silently adopt a token-only profile;
-- [x] optional DNS with `--no-dns`;
-- [x] optional connector startup with `--no-start`;
-- [x] public URL/status output;
-- [x] rollback newly-created Tunnel when later provisioning fails where practical.
+- [x] `cfm upgrade`;
+- [x] `--dry-run`, `--yes`, stable release and `main` channels;
+- [x] npm/global installation detection;
+- [x] stable npm/GitHub updates pin the latest GitHub Release tag;
+- [x] unknown/development installs are not automatically replaced;
+- [x] updater commands use argument arrays with `shell: false`;
+- [x] post-update `cfm migrate` invocation;
+- [x] Homebrew adapter interface prepared for a future formula;
+- [x] updater/migration tests.
 
-### v0.2 documentation and release UX
+### Documentation
 
-- [x] root README updated for v0.2;
-- [x] English / Traditional Chinese / Japanese READMEs aligned to the same information architecture;
-- [x] generic documentation examples (`company-a`, `project-dev`, `api-dev.example.com`);
-- [x] multilingual Tunnel Token guides updated for both operating modes;
-- [x] multilingual upgrade guides;
-- [x] install/update/pinned-release instructions;
-- [x] `CHANGELOG.md` for v0.2.0.
+- [x] root README updated for v0.3;
+- [x] English / Traditional Chinese / Japanese README layouts synchronized;
+- [x] multilingual v0.3 upgrade guides;
+- [x] Configuration / Security / Commands / Troubleshooting / Architecture updated;
+- [x] Homebrew adapter vs actual formula availability documented clearly.
 
 ## Security constraints
 
-- Account API mode is optional.
-- Existing Tunnel Token-only users are never forced to provide an Account API Token.
-- Account API Tokens and Tunnel Tokens are separate credential types.
-- Use specific Account/Zone scopes instead of unrestricted cross-client tokens.
-- Raw credentials must not be printed or stored in `config.json`.
+- Account API mode remains optional.
+- Token-only users are never forced to add an Account API Token.
+- Account API Tokens and Tunnel Tokens remain separate credential types.
+- API-managed credentials must remain inside the owning Account boundary.
+- Raw credentials must not be printed or stored inside `config.json`.
+- Migration must never overwrite a different destination secret.
 - Existing token-only profiles are never silently adopted.
 - Destructive remote Tunnel operations require explicit confirmation.
+- Self-upgrade must not use shell interpolation or guess unknown installation types.
+- Prefer specific Account/Zone scopes over unrestricted cross-client credentials.
 
 ## Near-term candidates
 
-- live Cloudflare smoke-test checklist automation/documentation;
-- JSON output (`cfm status --json`, `cfm doctor --json`);
+- publish an official Homebrew formula/tap and validate the `brew upgrade` adapter end-to-end;
+- optional npm registry publication in addition to GitHub installation;
+- installation metadata/diagnostics that clearly show which package manager owns `cfm`;
+- JSON output (`cfm status --json`, `cfm doctor --json`, migration plan JSON);
 - zsh/bash/fish completion;
-- optional macOS Keychain / 1Password secret backends;
-- automated semantic/versioned GitHub releases;
-- npm registry publication;
-- Homebrew formula if there is enough demand;
+- optional macOS Keychain / 1Password credential backends;
 - localhost/public-hostname health checks;
-- clearer automation-oriented exit codes.
+- clearer automation-oriented exit codes;
+- live Cloudflare smoke-test automation/documentation.
 
 ## Non-goals
 
@@ -115,10 +120,12 @@ The project does not aim to:
 
 - replace `cloudflared`;
 - implement the Cloudflare Tunnel protocol;
-- become a full Cloudflare account administration dashboard;
-- centralize multiple clients' unrestricted credentials;
+- become a full Cloudflare administration dashboard;
+- centralize unrelated clients under unrestricted credentials;
 - require API provisioning for the basic Tunnel Token workflow;
-- auto-adopt or silently mutate existing remote Tunnels;
-- create duplicate Tunnels simply because a user upgraded from v0.1;
-- bypass Cloudflare account/security boundaries;
+- auto-adopt existing Tunnels;
+- create duplicate Tunnels because a user upgraded;
+- silently overwrite credential conflicts during migration;
+- self-update an installation whose package manager cannot be identified safely;
+- claim Homebrew distribution exists before a real formula/tap is published;
 - prefer Global API Keys over scoped API Tokens.

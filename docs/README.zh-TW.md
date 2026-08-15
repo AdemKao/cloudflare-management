@@ -17,11 +17,11 @@
 
 ---
 
-> 此繁體中文版與 root `README.md` 使用相同資訊架構；新增功能、安裝、升級、安全與 Quick Start 應同步維護。
+> 此繁體中文版與 root `README.md` 使用相同資訊架構；安裝、升級、安全、Quick Start 與主要功能應同步維護。
 
 ## 為什麼需要這個工具
 
-同時維護多間公司時，通常也會同時面對多個 Cloudflare Account、Domain、Tunnel Token、API Token、localhost port，以及多個 `cloudflared` process。
+同時維護多間公司時，通常也會面對多個 Cloudflare Account、Domain、Tunnel Token、API Token、localhost port，以及多個 `cloudflared` process。
 
 `cfm` 保留不同客戶之間的安全邊界，同時把本機操作流程統一：
 
@@ -49,14 +49,14 @@ localhost             localhost             localhost
 
 ### 1. Tunnel Token 模式 — 最低權限
 
-如果 Cloudflare 上已經有 remotely-managed Tunnel，只需要把該 Tunnel 的 Token 保存到本機：
+Cloudflare 上已經有 remotely-managed Tunnel 時：
 
 ```bash
 cfm add company-a
 cfm start company-a
 ```
 
-不需要 Account API Token。
+不需要 Account API Token。v0.3 中，尚未綁定 Account 的 `token-only` profile 會放在 `legacy/tunnels/`，直到你明確執行 adoption。
 
 ### 2. Account API 模式 — 可選的資源管理
 
@@ -72,31 +72,33 @@ cfm route add company-a project-dev \
 cfm start project-dev
 ```
 
-Account API Token 與 Tunnel Token 會分開保存。
+Account API Token 與 Tunnel Token 會分開保存，並依所屬 Cloudflare Account 分資料夾管理。
 
 ## 功能重點
 
-- **多 Account 隔離** — 不同公司可以使用彼此獨立的 Account/API/Tunnel credential。
-- **向後相容** — 已經使用 `cfm add <profile>` 的 v0.1 使用者升級後仍可直接繼續使用。
-- **安全 Migration** — v1 metadata 會先備份，再原子化、可重複地升級成 schema v2。
-- **Explicit Adoption** — 可以把既有 Tunnel 納入 API 管理，不會因此重複建立另一條 Tunnel。
-- **Tunnel Provisioning** — 支援 list/create/show/delete remotely-managed Tunnel。
-- **Published Hostname 管理** — 設定 hostname → origin 規則。
-- **可選 DNS 自動化** — 只有在明確要求且 API Token 有權限時才建立/移除 CNAME。
-- **自動 Zone 判斷** — 使用 `--dns` 且沒有提供 Zone ID 時，`cfm` 可以從 hostname 自動找出對應 Cloudflare Zone。
-- **權限感知診斷** — v0.2.2 會區分 Tunnel、Zone、DNS 權限，並辨識 Cloudflare error code `10000`。
-- **一條指令公開服務** — `cfm expose` 可組合 Tunnel + route + DNS + connector startup。
-- **Secret 保護** — Token 保存於 repo 外，檔案權限為 `0600`。
-- **Process args 不放 raw Tunnel Token** — 使用 `cloudflared tunnel run --token-file ...`。
-- **診斷與 Log** — 內建 `doctor`、`status` 與 log follow。
-- **零 runtime npm dependency** — 僅需要 Node.js 20+。
+- **多 Account 隔離** — 每個 Cloudflare Account 都有自己的本機 credential boundary。
+- **Account-based storage** — 使用 `accounts/<account>/api-token` 與 `accounts/<account>/tunnels/*.token`。
+- **向後相容** — 既有 v0.1 / v0.2 profile alias 升級後仍可直接使用。
+- **安全 schema v3 Migration** — v1/v2 metadata 先備份，secret relocation 可恢復且避免衝突覆蓋。
+- **Migration 預覽** — `cfm migrate --dry-run` 可先看所有 credential 移動計畫。
+- **CLI 自動更新** — v0.3+ 可使用 `cfm upgrade`。
+- **未來安裝器擴充** — updater abstraction 現在支援 npm/GitHub 流程，也預留未來 Homebrew formula。
+- **Explicit Adoption** — 把既有 Tunnel 綁定到 Account，不會重複建立 remote Tunnel；Token 會移進該 Account 目錄。
+- **Tunnel Provisioning** — list/create/show/delete remotely-managed Tunnel。
+- **Published Hostname 管理** — hostname → origin。
+- **可選 DNS 自動化** — 只有明確要求且 Token 有權限時才建立/移除 CNAME。
+- **自動 Zone 判斷** — `--dns` 沒有 Zone ID 時可由 hostname 找 Zone。
+- **權限感知診斷** — 區分 Tunnel / Zone / DNS 權限並處理 Cloudflare code `10000`。
+- **一條指令公開服務** — `cfm expose` 組合 Tunnel + route + DNS + connector startup。
+- **Credential 保護** — 檔案權限 `0600`，不把 raw Tunnel Token 放進 process args。
+- **零 runtime npm dependency** — Node.js 20+。
 
 ## 系統需求
 
 - macOS 或 Linux
 - Node.js 20+
 - `cloudflared` 已安裝且存在於 `PATH`
-- 依使用模式具備對應的 Cloudflare Account 權限
+- 依使用模式具備對應 Cloudflare 權限
 
 macOS：
 
@@ -112,40 +114,113 @@ brew install cloudflared
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-安裝指定 release tag：
+安裝 v0.3.0：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 ```
 
-確認安裝：
+確認：
 
 ```bash
 cfm --version
 cfm --help
 ```
 
+> Homebrew distribution 是規劃中的安裝方式。v0.3 有 Homebrew updater adapter，不代表 formula/tap 已經正式發布；在正式發布前仍請使用 npm/GitHub 安裝。
+
 ## 更新版本
 
-如果原本就是直接從 GitHub 安裝 `cfm`，更新時重新安裝 `main` 即可：
+### v0.2.x 使用者：第一次升級一次
+
+`cfm upgrade` 從 v0.3 才存在，因此 v0.2.x 第一次先執行：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
+cfm migrate --dry-run
+cfm migrate
 ```
 
-如果要鎖定指定 release：
+### v0.3 之後
+
+之後直接：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm upgrade
 ```
 
-Profile、Account API Token、Tunnel Token、runtime state 與 logs 都保存在 npm package 目錄之外，因此重新安裝/更新 CLI **不會刪除既有設定**。
+只看計畫：
 
-從 v0.1 升級到 v0.2 時，第一次讀取設定會先備份 v1 metadata，然後自動把既有 profile 遷移成 `token-only`，並保留原本的 Tunnel Token 路徑。
+```bash
+cfm upgrade --dry-run
+```
 
-重要開發機或客戶環境升級前，請先閱讀 [升級指南](./UPGRADING.zh-TW.md)。
+自動確認：
+
+```bash
+cfm upgrade --yes
+```
+
+刻意跟 `main`：
+
+```bash
+cfm upgrade --channel main
+```
+
+目前 npm/GitHub stable channel 會取得最新 GitHub Release tag，並安裝該確切版本。更新命令使用 argument array，不透過 shell 字串插值，成功後會再執行 `cfm migrate`。
+
+重要環境更新前請看 [升級指南](./UPGRADING.zh-TW.md)。
+
+## v0.3 Account-based 資料夾
+
+```text
+~/.config/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       ├── project-dev.token
+│   │       └── webhook-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
+```
+
+現在 filesystem 跟 domain model 一致：API-managed Tunnel credential 會放在真正擁有它的 Account 目錄；還沒綁 Account 的 token-only profile 才留在 `legacy/tunnels/`。
+
+## 從 v0.1 / v0.2 安全 Migration
+
+先預覽：
+
+```bash
+cfm migrate --dry-run
+```
+
+執行：
+
+```bash
+cfm migrate
+```
+
+Migration 會保留 Account/profile alias 與 credential 內容，只更新 credential file path。替換舊 metadata 前會在 `backups/` 建立 version-specific backup。
+
+如果 Migration 中途被中斷，可以在下次執行繼續；如果 destination 已經存在**不同內容**的 credential，`cfm` 會直接停止，不會覆蓋。
+
+原本的 profile alias 不變：
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
 
 ## Quick Start：已經有 Tunnel
 
@@ -158,23 +233,20 @@ cfm start company-a
 cfm status company-a
 ```
 
-Cloudflare Dashboard 的完整操作路徑請看 [Tunnel Token 指南](./TUNNEL_TOKEN.zh-TW.md)。
+Token-only credential 會放在：
+
+```text
+legacy/tunnels/company-a.token
+```
+
+Dashboard 操作請看 [Tunnel Token 指南](./TUNNEL_TOKEN.zh-TW.md)。
 
 ## Quick Start：直接從 CLI 建立 Tunnel
 
-先加入一組最小權限的 Cloudflare Account API credential：
+加入 Account API credential：
 
 ```bash
 cfm account add company-a
-```
-
-也可以用非互動模式：
-
-```bash
-cfm account add company-a \
-  --account-id <ACCOUNT_ID> \
-  --token-file ~/.secrets/company-a-api-token \
-  --zone-id <OPTIONAL_DEFAULT_ZONE_ID>
 ```
 
 建立 Tunnel：
@@ -183,7 +255,16 @@ cfm account add company-a \
 cfm tunnel create company-a project-dev
 ```
 
-設定 published hostname：
+本機資料會是：
+
+```text
+accounts/company-a/
+├── api-token
+└── tunnels/
+    └── project-dev.token
+```
+
+設定 route：
 
 ```bash
 cfm route add company-a project-dev \
@@ -191,7 +272,7 @@ cfm route add company-a project-dev \
   --url http://localhost:3001
 ```
 
-如果 API Token 同時具備該 Zone 的 DNS 權限，可以加上 `--dns`：
+如果要同時管理 DNS：
 
 ```bash
 cfm route add company-a project-dev \
@@ -200,62 +281,60 @@ cfm route add company-a project-dev \
   --dns
 ```
 
-使用 `--dns` 時，Zone ID 的判斷順序如下：
+Zone 判斷順序：
 
 ```text
-1. 指令上的 --zone-id <ZONE_ID>
-2. Account 的 defaultZoneId
-3. 從 hostname 自動尋找對應 Zone
+1. --zone-id <ZONE_ID>
+2. Account defaultZoneId
+3. 從 hostname 自動 discovery
 ```
 
-自動尋找會從完整 hostname 往上找 parent domain，例如：
+自動 discovery 需要 Zone Read；DNS record mutation 另外需要目標 Zone 的 DNS Edit。
 
-```text
-api-dev.example.com
-       ↓
-example.com
-```
-
-自動尋找需要目標 Zone 的 Zone Read 權限；建立或更新 DNS record 則是另一個獨立的 DNS Edit 權限。如果你刻意不想給 Zone Read，就直接使用 `--zone-id <ZONE_ID>`，但 DNS Edit 權限仍然需要。
-
-Cloudflare 有可能回傳 HTTP 200，但 response 內容是 `success: false` 並帶 error code `10000`（`Authentication error`）。`cfm` v0.2.2 會把它辨識成 authentication/authorization failure，而不是只輸出模糊的 `Authentication error`。
-
-### 修改 DNS 前先做權限診斷
-
-只執行：
+### 修改 DNS 前先檢查權限
 
 ```bash
 cfm account doctor company-a
 ```
 
-現在只會宣告 **Tunnel API credential OK**，不再誤導成所有 Cloudflare 權限都正常。
-
-如果要額外確認 hostname 對應 Zone 是否能被找到，以及是否能讀取 DNS record：
+基本 doctor 只驗證 Tunnel API。要另外驗證 Zone discovery 與 DNS read：
 
 ```bash
 cfm account doctor company-a \
   --hostname api-dev.example.com
 ```
 
-如果已經知道 Zone ID，也可以跳過 auto-discovery：
+Doctor 不會修改 DNS，所以成功不代表 DNS Write 一定有權限。
+
+## Adopt 既有 token-only Tunnel
+
+如果之前已經：
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com \
-  --zone-id <ZONE_ID>
+cfm add company-a
 ```
 
-Doctor 不會修改 DNS，因此 doctor 成功只代表 Zone discovery / DNS read 正常，**不代表 DNS write 一定成功**。`cfm route ... --dns` 仍然需要目標 Zone 的 DNS Edit 權限。
-
-最後啟動 connector：
+之後希望把同一條 remote Tunnel 綁定到 Account：
 
 ```bash
-cfm start project-dev
+cfm account add company-a
+cfm tunnel adopt company-a company-a \
+  --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption 不會建立第二條 Tunnel，也不會改變 Token value；只會把 credential 從：
+
+```text
+legacy/tunnels/company-a.token
+```
+
+移到：
+
+```text
+accounts/company-a/tunnels/company-a.token
 ```
 
 ## 一條指令公開服務：`cfm expose`
-
-`cfm expose` 也使用相同的 Zone 判斷規則，因此 API Token 可以自動查 Zone 時，不再要求一定要先設定 default Zone ID：
 
 ```bash
 cfm expose company-a \
@@ -264,72 +343,32 @@ cfm expose company-a \
   --port 3001
 ```
 
-流程如下：
+流程：
 
 ```text
 驗證 Account credential
        ↓
-重用 adopted / provisioned Tunnel
-如果沒有 local profile 才建立新的 Tunnel
+重用 adopted/provisioned Tunnel
+或在沒有 local profile 時建立 Tunnel
        ↓
 設定 hostname → origin
        ↓
-判斷 Zone ID（explicit / default / auto-discovery）
+判斷 Zone ID
        ↓
 除非 --no-dns，否則管理 DNS
        ↓
 除非 --no-start，否則啟動 cloudflared
        ↓
-輸出 public URL / status
+輸出 public URL/status
 ```
 
-`cfm expose` 不會偷偷把 `token-only` profile adopt 進 API 管理；需要先明確執行 `cfm tunnel adopt`。
-
-## 已經使用過 v0.1 的使用者
-
-假設你之前已經執行：
-
-```bash
-cfm add company-a
-```
-
-升級後可以直接繼續：
-
-```bash
-cfm start company-a
-cfm status company-a
-cfm logs company-a
-```
-
-Profile 會遷移成：
-
-```text
-managementMode: token-only
-account: null
-tunnelId: null
-原本 tokenFile 路徑保留
-```
-
-如果未來希望把同一條既有 Tunnel 納入 API 管理：
-
-```bash
-cfm account add company-a
-cfm tunnel adopt company-a company-a
-```
-
-如果名稱無法唯一判斷，請明確指定 remote Tunnel：
-
-```bash
-cfm tunnel adopt company-a company-a \
-  --tunnel-id <TUNNEL_UUID>
-```
-
-Adoption 不會建立第二條 Tunnel，也不會預設覆蓋原本的 Tunnel Token。
+`cfm expose` 不會偷偷 adopt token-only profile。
 
 ## 指令總覽
 
 | 區域 | 指令 |
 | --- | --- |
+| Lifecycle | `migrate`, `upgrade` |
 | Local profiles | `init`, `add`, `remove`, `list` |
 | Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
 | Accounts | `account add/list/show/doctor/remove` |
@@ -341,37 +380,17 @@ Adoption 不會建立第二條 Tunnel，也不會預設覆蓋原本的 Tunnel To
 
 ## Security Model
 
-不同用途的 Secret 會分開保存：
-
-```text
-~/.config/cloudflare-management/
-├── config.json
-└── secrets/
-    ├── company-a.token                 # 舊版 / token-only 路徑可保留
-    ├── accounts/
-    │   └── company-a.api-token
-    └── tunnels/
-        └── project-dev.token
-```
-
-Runtime data：
-
-```text
-~/.local/state/cloudflare-management/
-├── logs/
-└── runtime/
-```
-
 主要原則：
 
-- API Token 與 Tunnel Token 是兩種不同 credential。
-- Secret file 權限為 `0600`。
-- Raw credential 不會寫進 `config.json`。
-- 正常指令不會輸出 raw token。
+- Account API Token 與 Tunnel Token 是不同 credential。
+- API-managed credential 依 Account boundary 分資料夾。
+- 未綁 Account 的 token-only profile 留在 `legacy/tunnels/`。
+- Credential file 權限為 `0600`。
+- Raw credential 不寫進 `config.json`，正常命令不輸出 raw Token。
+- Migration 不會覆蓋內容不同的 destination credential。
 - Remote Tunnel delete 需要確認或 `--yes`。
-- 不同客戶應使用限制到特定 Account / Zone 的最小權限 Token，不要共用跨客戶的高權限 credential。
-- 只有需要自動判斷 Zone 時才需要 Zone Read；如果改用明確的 `--zone-id` 或 account default Zone ID，就不需要靠 Zone listing 來判斷。
-- Tunnel API doctor 成功不代表 DNS 權限一定存在；DNS automation 仍需要目標 Zone 的 DNS Edit。
+- `cfm upgrade` 不使用 shell interpolation，也不會猜測未知/dev installation。
+- 不同客戶應使用特定 Account / Zone 的最小權限 Token。
 
 完整說明請看 [Security](./SECURITY.md)。
 
@@ -384,12 +403,12 @@ Runtime data：
 - [升級指南](./UPGRADING.zh-TW.md)
 - [Tunnel Token 指南](./TUNNEL_TOKEN.zh-TW.md)
 - [Architecture](./ARCHITECTURE.md)
-- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
 - [Command Reference](./COMMANDS.md)
 - [Configuration](./CONFIGURATION.md)
 - [Security](./SECURITY.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
 - [Roadmap](./ROADMAP.md)
+- [Changelog](../CHANGELOG.md)
 
 ## 開發
 
@@ -400,13 +419,11 @@ npm link
 npm run check
 ```
 
-測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention、adoption、DNS Zone 自動判斷、code `10000` authorization handling 與 permission diagnostics 等情境，Cloudflare API 測試使用 mocked response。
+測試涵蓋 config migration/recovery/conflict、Account-based storage、adoption token relocation、Cloudflare API error/DNS authorization、installer detection 與 updater command construction。
 
 ## 專案範圍
 
-`cfm` 的目標是成為聚焦於 Cloudflare Tunnel 工作流程的 CLI，而不是完整的 Cloudflare Account 管理工具。
-
-Cloudflare 仍然是 Account、Zone、Tunnel、remote configuration、DNS、Access policy 與 credential 發行/撤銷的 source of truth。
+`cfm` 是聚焦於 Cloudflare Tunnel workflow 的 CLI，不是通用 Cloudflare administration CLI。Cloudflare 仍是 Account、Zone、Tunnel、remote configuration、DNS、Access policy 與 credential lifecycle 的 source of truth。
 
 ## License
 

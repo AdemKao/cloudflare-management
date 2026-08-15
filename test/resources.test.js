@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { appPaths, saveConfig } from '../src/config.js';
+import { accountApiTokenPath, accountTunnelTokenPath, appPaths, legacyTunnelTokenPath, saveConfig } from '../src/config.js';
 import { writeSecret } from '../src/secrets.js';
 import { addRoute, adoptTunnel, createManagedTunnel, doctorAccount, expose } from '../src/resources.js';
 
@@ -14,14 +14,14 @@ function jsonResponse(body, status = 200) {
 async function fixture() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'cfm-resource-'));
   const paths = appPaths({ XDG_CONFIG_HOME: path.join(root, 'config'), XDG_STATE_HOME: path.join(root, 'state') }, root);
-  const apiTokenFile = path.join(paths.configRoot, 'secrets', 'accounts', 'company-a.api-token');
-  const tunnelTokenFile = path.join(paths.configRoot, 'secrets', 'company-a.token');
-  const managedTokenFile = path.join(paths.configRoot, 'secrets', 'tunnels', 'project-dev.token');
+  const apiTokenFile = accountApiTokenPath('company-a', paths);
+  const tunnelTokenFile = legacyTunnelTokenPath('company-a', paths);
+  const managedTokenFile = accountTunnelTokenPath('company-a', 'project-dev', paths);
   await writeSecret(apiTokenFile, 'api-secret');
   await writeSecret(tunnelTokenFile, 'existing-tunnel-token');
   await writeSecret(managedTokenFile, 'managed-tunnel-token');
   await saveConfig({
-    version: 2,
+    version: 3,
     accounts: {
       'company-a': {
         accountId: '0123456789abcdef0123456789abcdef',
@@ -49,8 +49,9 @@ async function fixture() {
   return { paths, tunnelTokenFile };
 }
 
-test('account alias can coexist with an existing token-only profile and be adopted', async () => {
+test('account alias can coexist with a token-only profile and adoption relocates its token into the account boundary', async () => {
   const { paths, tunnelTokenFile } = await fixture();
+  const target = accountTunnelTokenPath('company-a', 'company-a', paths);
   const fetchImpl = async (url) => {
     assert.match(url, /cfd_tunnel\/22222222-2222-2222-2222-222222222222$/);
     return jsonResponse({ success: true, result: { id: '22222222-2222-2222-2222-222222222222', name: 'company-a' } });
@@ -62,8 +63,9 @@ test('account alias can coexist with an existing token-only profile and be adopt
   });
   assert.equal(adopted.managementMode, 'adopted');
   assert.equal(adopted.account, 'company-a');
-  assert.equal(adopted.tokenFile, tunnelTokenFile);
-  assert.equal((await fsp.readFile(tunnelTokenFile, 'utf8')).trim(), 'existing-tunnel-token');
+  assert.equal(adopted.tokenFile, target);
+  assert.equal((await fsp.readFile(target, 'utf8')).trim(), 'existing-tunnel-token');
+  await assert.rejects(() => fsp.access(tunnelTokenFile), /ENOENT/);
 });
 
 test('create refuses to duplicate an existing local profile before calling Cloudflare', async () => {

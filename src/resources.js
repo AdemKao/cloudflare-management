@@ -1,6 +1,6 @@
 import fsp from 'node:fs/promises';
 import { appPaths, loadConfig, saveConfig } from './config.js';
-import { accountTokenPath, readSecret, tunnelTokenPath, writeSecret } from './secrets.js';
+import { accountTokenPath, moveSecret, readSecret, tunnelTokenPath, writeSecret } from './secrets.js';
 import { CloudflareClient } from './cloudflare/client.js';
 import { validateAccountId, validateHostname, validateName, validateOrigin, validateTunnelId, validateZoneId } from './validation.js';
 
@@ -137,7 +137,10 @@ export async function removeAccount(alias, { paths = appPaths(), keepToken = fal
   if (linked.length) throw new Error(`Account "${alias}" is still referenced by tunnel profile(s): ${linked.map(([name]) => name).join(', ')}`);
   delete config.accounts[alias];
   await saveConfig(config, paths);
-  if (!keepToken) await fsp.rm(account.apiTokenFile, { force: true });
+  if (!keepToken) {
+    await fsp.rm(account.apiTokenFile, { force: true });
+    await fsp.rmdir(new URL('.', `file://${account.apiTokenFile}`).pathname).catch(() => {});
+  }
 }
 
 export async function listRemoteTunnels(accountAlias, { fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
@@ -164,7 +167,7 @@ export async function createManagedTunnel(accountAlias, name, { fetchImpl = glob
     await client.deleteTunnel(tunnelId).catch(() => {});
     throw error;
   }
-  const tokenFile = tunnelTokenPath(name, paths);
+  const tokenFile = tunnelTokenPath(accountAlias, name, paths);
   try {
     await writeSecret(tokenFile, token);
     const now = new Date().toISOString();
@@ -212,12 +215,24 @@ export async function adoptTunnel(accountAlias, profileName, { tunnelId = null, 
   const duplicate = Object.entries(config.tunnels).find(([name, tunnel]) => name !== profileName && tunnel.account === accountAlias && tunnel.tunnelId === remoteId);
   if (duplicate) throw new Error(`Remote Tunnel ${remoteId} is already attached to local profile "${duplicate[0]}".`);
 
+  const previous = { ...profile };
+  const previousTokenFile = profile.tokenFile;
+  const targetTokenFile = tunnelTokenPath(accountAlias, profileName, paths);
+  await moveSecret(previousTokenFile, targetTokenFile);
+
   profile.managementMode = 'adopted';
   profile.account = accountAlias;
   profile.tunnelId = remoteId;
   profile.remoteName = remote.name ?? profileName;
+  profile.tokenFile = targetTokenFile;
   profile.updatedAt = new Date().toISOString();
-  await saveConfig(config, paths);
+  try {
+    await saveConfig(config, paths);
+  } catch (error) {
+    Object.assign(profile, previous);
+    await moveSecret(targetTokenFile, previousTokenFile).catch(() => {});
+    throw error;
+  }
   return { name: profileName, ...profile };
 }
 

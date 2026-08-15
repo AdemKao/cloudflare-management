@@ -1,7 +1,6 @@
 import fsp from 'node:fs/promises';
-import path from 'node:path';
-import { appPaths, ensureDirectories, loadConfig, saveConfig } from './config.js';
-import { resolveSecret, promptLine, writeSecret } from './secrets.js';
+import { appPaths, ensureDirectories, loadConfig, migrateToLatest, saveConfig } from './config.js';
+import { resolveSecret, promptLine, unboundTunnelTokenPath, writeSecret } from './secrets.js';
 import { validateName } from './validation.js';
 import { formatCloudflareError, CloudflareApiError } from './cloudflare/client.js';
 import {
@@ -31,6 +30,7 @@ import {
   stopAll,
   stopTunnel,
 } from './process.js';
+import { buildUpgradePlan, detectInstallManager, executeUpgrade } from './upgrade.js';
 
 export { validateName } from './validation.js';
 
@@ -68,7 +68,7 @@ async function addLegacyTunnel(name, options, paths = appPaths()) {
     throw new Error(`Tunnel profile "${name}" already exists. Use --force to replace it.`);
   }
   const token = await resolveSecret(options, 'Tunnel token: ');
-  const tokenFile = path.join(paths.secretsRoot, `${name}.token`);
+  const tokenFile = unboundTunnelTokenPath(name, paths);
   await writeSecret(tokenFile, token);
   const now = new Date().toISOString();
   config.tunnels[name] = {
@@ -116,6 +116,58 @@ function printObject(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function printMigrationPlan(result, { dryRun = false } = {}) {
+  if (!result.changed) {
+    console.log(`Storage schema: v${result.toVersion} (no migration needed)`);
+    return;
+  }
+  console.log(`${dryRun ? 'Migration preview' : 'Migrated storage'}: v${result.fromVersion} -> v${result.toVersion}`);
+  for (const action of result.actions) {
+    console.log(`  ${action.kind}: ${action.name}`);
+    console.log(`    ${action.source}`);
+    console.log(`    -> ${action.destination}`);
+  }
+  if (!dryRun && result.backupFile) console.log(`Metadata backup: ${result.backupFile}`);
+}
+
+async function runMigration(options, paths) {
+  const dryRun = Boolean(options['dry-run']);
+  const result = await migrateToLatest({ paths, dryRun });
+  printMigrationPlan(result, { dryRun });
+}
+
+async function runSelfUpgrade(options, paths) {
+  const currentVersion = await packageVersion();
+  const channel = options.channel || 'release';
+  const manager = options.manager || await detectInstallManager();
+  const migrationPreview = await migrateToLatest({ paths, dryRun: true });
+  const plan = await buildUpgradePlan({ currentVersion, manager, channel });
+
+  console.log(`Current version: ${currentVersion}`);
+  console.log(`Install manager: ${manager}`);
+  printMigrationPlan(migrationPreview, { dryRun: true });
+
+  if (!plan.supported) {
+    throw new Error(`${plan.reason} Update manually with: ${plan.manual}`);
+  }
+  if (plan.latestVersion) console.log(`Latest release: ${plan.latestVersion}`);
+  console.log(`Upgrade command: ${plan.display}`);
+
+  if (options['dry-run']) return;
+
+  if (plan.upToDate) {
+    if (migrationPreview.changed) printMigrationPlan(await migrateToLatest({ paths }), { dryRun: false });
+    console.log('cfm is already up to date on the selected release channel.');
+    return;
+  }
+
+  if (!await confirmAction('Upgrade cfm and migrate local storage?', options)) return console.log('Cancelled.');
+  if (migrationPreview.changed) printMigrationPlan(await migrateToLatest({ paths }), { dryRun: false });
+  const result = executeUpgrade(plan);
+  if (result.updated) console.log('cfm package upgrade completed.');
+  if (result.migrated) console.log('Post-upgrade migration completed.');
+}
+
 async function runAccount(positionals, options, paths) {
   const action = positionals[0];
   const alias = positionals[1];
@@ -132,6 +184,7 @@ async function runAccount(positionals, options, paths) {
     });
     console.log(`Added Cloudflare account: ${alias}`);
     console.log(`Account ID: ${account.accountId}`);
+    console.log(`Account storage: ${new URL('.', `file://${account.apiTokenFile}`).pathname}`);
     if (account.defaultZoneId) console.log(`Default Zone ID: ${account.defaultZoneId}`);
     return;
   }
@@ -195,7 +248,7 @@ async function runTunnel(positionals, options, paths) {
     const adopted = await adoptTunnel(account, name, { tunnelId: options['tunnel-id'] || null, paths });
     console.log(`Adopted existing profile: ${name}`);
     console.log(`Tunnel ID: ${adopted.tunnelId}`);
-    console.log('Existing Tunnel Token file was preserved.');
+    console.log(`Tunnel Token moved into account-scoped storage: ${adopted.tokenFile}`);
     return;
   }
   if (action === 'show') {
@@ -289,7 +342,11 @@ function printHelp() {
 
 Manage Cloudflare Tunnel connectors and optionally provision Tunnels/routes through the Cloudflare API.
 
-Token-only / v0.1-compatible commands:
+Lifecycle / maintenance:
+  cfm migrate [--dry-run]
+  cfm upgrade [--yes] [--dry-run] [--channel release|main] [--manager npm|brew]
+
+Token-only / backward-compatible commands:
   cfm init
   cfm add <name> [--token-file <path>] [--force]
   cfm remove <name>
@@ -304,7 +361,7 @@ Token-only / v0.1-compatible commands:
   cfm doctor [name]
   cfm config
 
-Account API mode (v0.2):
+Account API mode:
   cfm account add <name> [--account-id <id>] [--token-file <path>] [--zone-id <id>] [--force]
   cfm account list
   cfm account show <name>
@@ -324,9 +381,14 @@ Account API mode (v0.2):
 
   cfm expose <account> --name <tunnel> --hostname <host> (--port <port>|--url <origin>) [--zone-id <id>] [--no-dns] [--no-start]
 
+Storage model (v0.3):
+  API-managed credentials are grouped under accounts/<account>/.
+  Unbound token-only profiles stay under legacy/tunnels/ until explicit adoption.
+
 Upgrade safety:
-  Existing profiles created with 'cfm add company-a' migrate as token-only and keep working unchanged.
-  Use 'cfm tunnel adopt' only when you explicitly want to attach an existing profile to API management.
+  v1/v2 configs migrate automatically to v3 with metadata backup and recoverable secret relocation.
+  'cfm migrate --dry-run' previews every credential move without changing files.
+  'cfm upgrade' is package-manager-aware; npm works now and Homebrew support is adapter-ready for a future formula.
 
 Security:
   API Tokens and Tunnel Tokens are stored as mode-600 files and are never printed by normal commands.
@@ -339,6 +401,8 @@ export async function run(args, { paths = appPaths() } = {}) {
     if (args.includes('--help') || args.includes('-h')) return printHelp();
     const { command, positionals, options } = parseArgs(args);
     if (command === 'help') return printHelp();
+    if (command === 'migrate') return runMigration(options, paths);
+    if (command === 'upgrade') return runSelfUpgrade(options, paths);
     if (command === 'init') {
       await ensureDirectories(paths);
       await loadConfig({ paths });

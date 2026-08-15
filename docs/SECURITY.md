@@ -6,48 +6,73 @@
 
 `cloudflare-management` is designed around client/account isolation, least privilege, explicit adoption, and secret minimization.
 
-v0.2 supports two independent credential modes:
+Two credential modes remain independent:
 
 - **Tunnel Token mode** — low privilege, used only to run an existing remotely-managed Tunnel.
 - **Account API mode** — optional, used when `cfm` should create/manage Tunnels, routes, and optionally DNS.
 
-Existing v0.1 users are never forced into Account API mode.
+## Account-scoped filesystem boundary in v0.3
+
+API-managed credentials are grouped by Cloudflare Account alias:
+
+```text
+~/.config/cloudflare-management/
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       └── project-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
+```
+
+This makes the local filesystem match the domain/security model:
+
+```text
+Account alias
+├── Account API credential
+└── Tunnel credentials owned by that Account
+```
+
+A token-only profile that has not been attached to an Account remains under `legacy/tunnels/`.
 
 ## Credential types
 
 ### Tunnel Token
 
-A Tunnel Token is scoped to a specific remotely-managed Tunnel and is used by `cloudflared`.
+A Tunnel Token is scoped to a remotely-managed Tunnel and is used by `cloudflared`.
 
-Legacy/token-only files remain at their existing paths, for example:
+Token-only/unbound profiles:
 
 ```text
-~/.config/cloudflare-management/secrets/company-a.token
+~/.config/cloudflare-management/legacy/tunnels/<profile>.token
 ```
 
-New API-provisioned Tunnel tokens are stored under:
+Adopted/provisioned profiles:
 
 ```text
-~/.config/cloudflare-management/secrets/tunnels/<profile>.token
+~/.config/cloudflare-management/accounts/<account>/tunnels/<profile>.token
 ```
 
 ### Account API Token
 
-An Account API Token is a higher-privilege credential used only for Cloudflare API operations.
-
-It is stored separately:
+An Account API Token is a higher-privilege credential used for Cloudflare API operations.
 
 ```text
-~/.config/cloudflare-management/secrets/accounts/<account>.api-token
+~/.config/cloudflare-management/accounts/<account>/api-token
 ```
 
-The CLI never stores the raw API Token inside `config.json`.
+Raw credentials are never embedded in `config.json`.
 
 ## File permissions
 
-Secret directories are created with restrictive permissions and secret files are written with mode `0600`.
+Credential directories use restrictive permissions and credential files are written with mode `0600` where supported.
 
-Metadata, Tunnel IDs, Account IDs, aliases, and secret-file paths may appear in `config.json`; raw credential values must not.
+Metadata, Account IDs, Tunnel IDs, aliases, and credential-file paths may appear in `config.json`; raw credential values must not.
 
 ## Process command line
 
@@ -57,82 +82,105 @@ Connectors are launched with:
 cloudflared tunnel run --token-file <path>
 ```
 
-The raw Tunnel Token is not embedded in the process arguments.
+The raw Tunnel Token is not embedded in process arguments.
 
-Account API Tokens are used only inside HTTPS API request headers and must never be printed to logs or command output.
+Account API Tokens are used only inside HTTPS API request headers and must never be printed to logs or normal command output.
 
 ## Least privilege
 
-For Tunnel provisioning, use an API Token restricted to the specific client/company Cloudflare Account with the minimum Tunnel-management permission required by Cloudflare.
+For Tunnel provisioning, use a Token restricted to the intended Cloudflare Account with only the Tunnel-management permissions required.
 
-DNS-related permissions are intentionally split:
+DNS permissions remain separate:
 
 ```text
-Automatic Zone discovery  → Zone:Zone:Read on the target Zone
-DNS record mutation       → DNS write permission on the target Zone
+Automatic Zone discovery  → Zone Read on the target Zone
+DNS record mutation       → DNS Edit/Write on the target Zone
 ```
 
-`Zone:Zone:Read` is only needed when `cfm` must discover the Zone ID from a hostname. If a user supplies `--zone-id <ZONE_ID>` or configures an account `defaultZoneId`, Zone discovery is skipped and the token does not need Zone listing permission for that step.
+If `--zone-id <ZONE_ID>` or an account `defaultZoneId` is provided, automatic Zone listing is skipped. DNS edits still require DNS write permission.
 
-If DNS automation is needed, add DNS write permission only for the required Zone(s). Avoid granting broader Zone permissions merely to make discovery convenient.
-
-Avoid:
+Avoid broad credentials such as:
 
 ```text
 All accounts
 All zones
-one shared unrestricted token across unrelated clients
+one unrestricted token shared across unrelated clients
 Global API Keys as the preferred credential
 ```
 
-## Existing profile migration
+## v1/v2 → v3 migration security
 
-A profile previously created with:
+Migration changes credential paths, not credential values.
 
-```bash
-cfm add company-a
-```
-
-migrates to schema v2 as:
+Before replacing metadata, `cfm` creates a version-specific backup under:
 
 ```text
-managementMode: token-only
-account: null
-tunnelId: null
-tokenFile: existing path
+~/.config/cloudflare-management/backups/
 ```
 
 Migration rules:
 
-- preserve the existing token path and value;
-- create a metadata backup before first migration write;
-- perform the config replacement atomically;
-- keep migration idempotent;
-- never silently replace a Tunnel Token;
-- never require an Account API Token just to continue using the old connector.
+- preserve aliases and secret contents;
+- use atomic config replacement;
+- make partial moves recoverable on the next run;
+- never silently replace a Tunnel Token or API Token;
+- refuse migration when a destination credential already exists with different contents;
+- leave token-only profiles unbound until explicit adoption;
+- never require Account API mode just to keep using an old token-only connector.
 
-## Explicit adoption
+Preview every planned move with:
+
+```bash
+cfm migrate --dry-run
+```
+
+## Explicit adoption changes the storage boundary
 
 A token-only profile becomes API-managed only through an explicit command:
 
 ```bash
 cfm account add company-a
-cfm tunnel adopt company-a company-a
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
 ```
 
-Adoption records the Account/Tunnel relationship but preserves the existing Tunnel Token by default.
+Adoption preserves the Token value while moving the credential from:
 
-`cfm` must not auto-adopt, silently create a duplicate remote Tunnel, or attach a profile to an ambiguous remote resource.
+```text
+legacy/tunnels/company-a.token
+```
+
+to:
+
+```text
+accounts/company-a/tunnels/company-a.token
+```
+
+`cfm` must not auto-adopt, create a duplicate remote Tunnel, or attach an ambiguous profile to an Account.
+
+## Self-upgrade security
+
+`cfm upgrade` is package-manager-aware.
+
+Security rules:
+
+- update commands are executed with argument arrays, not shell interpolation;
+- unknown/development installs are not guessed or replaced automatically;
+- stable npm/GitHub updates pin an actual GitHub Release tag;
+- `--dry-run` shows the update/migration plan before any mutation;
+- confirmation is required unless `--yes` is supplied;
+- post-update migration is invoked as a separate `cfm migrate` process so the newly installed version can apply future schemas.
+
+Homebrew support is adapter-ready for future formula distribution. Until a formula exists, users should not force `--manager brew` and assume it is an available distribution channel.
 
 ## Destructive operations
 
-Remote Tunnel deletion requires explicit confirmation or `--yes`:
+Remote Tunnel deletion requires confirmation or `--yes`:
 
 ```bash
 cfm tunnel delete company-a project-dev --yes
 ```
 
-Local `cfm remove <profile>` remains a local-only operation and does not delete the remote Cloudflare Tunnel.
+Local `cfm remove <profile>` remains local-only and does not delete the remote Cloudflare Tunnel.
 
 ## Logs and errors
 
@@ -141,13 +189,11 @@ Never print or persist:
 - Account API Token values;
 - Tunnel Token values;
 - Authorization headers;
-- API request objects containing secrets.
+- API request objects containing credentials.
 
-Cloudflare API errors are normalized before being displayed. Tests cover common 401/403/404/409/429/5xx failure paths and verify that token values are not included in errors.
+Cloudflare API errors are normalized before display. Tests cover common 401/403/404/409/429/5xx cases, Cloudflare code `10000`, and credential-leakage checks.
 
-Zone auto-discovery permission failures are converted into actionable guidance without printing the API Token or Authorization header.
-
-Connector logs may still contain hostnames, request metadata, network errors, or client-specific operational data. Review logs before sharing them publicly.
+Connector logs may contain hostnames, request metadata, network errors, or client-specific operational data. Review logs before sharing them publicly.
 
 ## Rotation
 
@@ -157,32 +203,31 @@ Tunnel Token rotation:
 cfm tunnel token <account> <profile>
 ```
 
-This refreshes the token into the protected local file and intentionally does not print the raw value.
-
-Account API Token rotation can be performed by re-running:
+Account API Token rotation:
 
 ```bash
 cfm account add <account> --force
 ```
 
-The new credential is validated before the existing local Account API Token is replaced.
+The replacement Account API credential is validated before it replaces the previous local value.
 
 ## Offboarding
 
 When work for a client ends:
 
-1. Stop local connectors.
-2. Remove or detach local profiles as appropriate.
-3. Revoke/rotate Tunnel Tokens in Cloudflare.
-4. Revoke the Account API Token if API mode was configured.
-5. Remove your Cloudflare account access when no longer required.
-6. Review local logs, temporary token files, password-manager entries, and CI secrets.
+1. stop local connectors;
+2. remove/delete linked Tunnel profiles as appropriate;
+3. revoke/rotate Tunnel Tokens in Cloudflare;
+4. revoke the Account API Token;
+5. remove your Cloudflare Account access when no longer required;
+6. remove the local Account credential after linked profiles are gone;
+7. review logs, temporary files, password-manager entries, and CI secrets.
+
+The account-scoped directory makes the local boundary easy to audit, but do not recursively delete an Account directory while active profiles still depend on it.
 
 ## Future secret backends
 
-The current protected-file model is intentionally simple. Future optional backends may include macOS Keychain, 1Password CLI, or other OS-native credential stores.
-
-Any future backend must preserve account isolation and must not weaken the token-only workflow.
+Future optional backends may include macOS Keychain, 1Password CLI, or other OS-native credential stores. Any backend must preserve Account isolation and the token-only workflow.
 
 ## Reporting security issues
 

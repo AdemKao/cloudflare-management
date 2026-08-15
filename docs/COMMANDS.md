@@ -1,12 +1,99 @@
 # Command Reference
 
-This page documents the `cfm` command surface in v0.2. The original v0.1 token-only workflow remains supported.
+This page documents the `cfm` command surface in v0.3. The original token-only workflow remains supported.
 
 ## Global options
 
 ```bash
 cfm --help
 cfm --version
+```
+
+## Lifecycle and maintenance
+
+### `cfm migrate`
+
+Preview local storage migration without changing files:
+
+```bash
+cfm migrate --dry-run
+```
+
+Run migration explicitly:
+
+```bash
+cfm migrate
+```
+
+v0.3 uses schema v3 and account-scoped credential storage. The same migration also runs automatically when a command first loads an older v1/v2 config.
+
+Migration never changes the secret value. It changes where the credential is stored:
+
+```text
+v0.2
+secrets/accounts/company-a.api-token
+secrets/tunnels/project-dev.token
+secrets/unbound-profile.token
+
+v0.3
+accounts/company-a/api-token
+accounts/company-a/tunnels/project-dev.token
+legacy/tunnels/unbound-profile.token
+```
+
+Before replacing old metadata, `cfm` creates a version-specific backup under `backups/`. Migration is recoverable after a partial move and refuses to overwrite a destination secret with different contents.
+
+### `cfm upgrade`
+
+From v0.3 onward, update the installed CLI through the detected package manager:
+
+```bash
+cfm upgrade
+```
+
+Useful options:
+
+```text
+--yes                 Skip confirmation
+--dry-run             Show migration/update plan without changing anything
+--channel release     Stable GitHub Release channel (default)
+--channel main        Latest repository main branch; npm/GitHub installs only
+--manager npm         Override installer detection
+--manager brew        Override installer detection
+```
+
+Examples:
+
+```bash
+cfm upgrade --dry-run
+cfm upgrade --yes
+cfm upgrade --channel main --yes
+```
+
+For the current GitHub/npm distribution, the stable channel resolves the latest GitHub Release tag and executes the equivalent of:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#vX.Y.Z
+```
+
+The updater uses argument arrays and does not interpolate an update command through a shell. After a successful package update, it runs `cfm migrate` so future schema migrations can be applied by the newly installed CLI.
+
+A Homebrew installer adapter is included for future formula distribution. Until an official formula/tap is published, `--manager brew` is only an adapter path and should not be treated as a currently available installation method.
+
+### Bootstrap from v0.2.x
+
+v0.2.x does not know the new `cfm upgrade` command. Update to v0.3.0 once using the existing installation method:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
+cfm --version
+cfm migrate
+```
+
+After that, future releases can use:
+
+```bash
+cfm upgrade
 ```
 
 ## Token-only / backward-compatible commands
@@ -17,7 +104,7 @@ cfm --version
 cfm init
 ```
 
-Initializes configuration, secret, log, and runtime directories. Existing v1 configuration is migrated to schema v2 on first load with a metadata backup.
+Initializes configuration, credential, log, and runtime directories. Older config schemas migrate automatically.
 
 ### `cfm add <name>`
 
@@ -28,7 +115,13 @@ cfm add company-a
 cfm add company-a --token-file ~/Downloads/company-a.token
 ```
 
-Profiles created this way use `managementMode: token-only`. They do not require an Account API Token.
+Profiles created this way use `managementMode: token-only`. They do not require an Account API Token and are stored under:
+
+```text
+~/.config/cloudflare-management/legacy/tunnels/<profile>.token
+```
+
+They move into an Account directory only after explicit adoption.
 
 ### Local connector lifecycle
 
@@ -47,7 +140,7 @@ cfm remove <name>
 cfm config
 ```
 
-`cfm remove` only removes the local profile/token/log; it does not delete the remote Cloudflare Tunnel.
+`cfm remove` only removes local profile state; it does not delete the remote Cloudflare Tunnel.
 
 ## Account API mode
 
@@ -68,11 +161,15 @@ cfm account add company-a \
   --zone-id <OPTIONAL_DEFAULT_ZONE_ID>
 ```
 
-The API credential is verified against the Tunnel API before account metadata is saved. Account aliases and local Tunnel/profile aliases are separate namespaces, so an existing `cfm add company-a` profile can coexist with `cfm account add company-a`.
+The credential is copied into:
+
+```text
+~/.config/cloudflare-management/accounts/company-a/api-token
+```
+
+Account aliases and local Tunnel/profile aliases remain separate namespaces, so `cfm add company-a` can coexist with `cfm account add company-a` until explicit adoption.
 
 ### Account inspection and permission diagnostics
-
-Basic account inspection:
 
 ```bash
 cfm account list
@@ -81,16 +178,14 @@ cfm account doctor company-a
 cfm account remove company-a --yes
 ```
 
-`cfm account doctor company-a` validates the Account credential against the Tunnel API only. It intentionally prints that Zone/DNS permissions were not checked.
-
-To validate Zone discovery and DNS-read access for a hostname without changing DNS records:
+`cfm account doctor company-a` validates the Tunnel API credential only. To validate Zone discovery and DNS-read access without changing DNS:
 
 ```bash
 cfm account doctor company-a \
   --hostname api-dev.example.com
 ```
 
-If you already know the Zone ID and want to bypass auto-discovery:
+Explicit Zone ID:
 
 ```bash
 cfm account doctor company-a \
@@ -98,7 +193,7 @@ cfm account doctor company-a \
   --zone-id <ZONE_ID>
 ```
 
-A successful DNS-read diagnostic does not mutate DNS records and therefore cannot prove DNS write permission. `cfm route ... --dns` still requires the target Zone to allow DNS edits.
+A read-only diagnostic cannot prove DNS write permission. `cfm route ... --dns` is the operation that exercises DNS edit access.
 
 Account removal is blocked while managed Tunnel profiles still reference the account.
 
@@ -116,24 +211,34 @@ cfm tunnel list company-a
 cfm tunnel create company-a project-dev
 ```
 
-This creates a remotely-managed Tunnel through the Cloudflare API, retrieves its Tunnel Token, stores the token locally with restrictive permissions, and creates a `provisioned` local profile.
+This creates a remotely-managed Tunnel, retrieves its Tunnel Token, and stores it under the selected Account:
 
-The command refuses to create a Tunnel when a local profile with the same name already exists. For a pre-existing manual Tunnel, use adoption instead.
+```text
+~/.config/cloudflare-management/accounts/company-a/tunnels/project-dev.token
+```
 
-### Adopt an existing v0.1/manual Tunnel
+The command refuses to create a Tunnel when a local profile with the same name already exists.
+
+### Adopt an existing/manual Tunnel
 
 ```bash
 cfm tunnel adopt company-a company-a
 ```
 
-If the remote Tunnel name cannot be resolved uniquely, provide its ID explicitly:
+If automatic matching is ambiguous:
 
 ```bash
 cfm tunnel adopt company-a company-a \
   --tunnel-id <TUNNEL_UUID>
 ```
 
-Adoption changes the local profile from `token-only` to `adopted` and records the Account/Tunnel ID. It does **not** create another Tunnel and does **not** replace the existing Tunnel Token file.
+Adoption:
+
+- does not create another remote Tunnel;
+- records the Account/Tunnel relationship;
+- preserves the existing Tunnel Token value;
+- moves the Token file from `legacy/tunnels/` into `accounts/<account>/tunnels/`;
+- refuses to overwrite a different destination credential.
 
 ### Show or refresh Tunnel credentials
 
@@ -142,21 +247,16 @@ cfm tunnel show company-a project-dev
 cfm tunnel token company-a project-dev
 ```
 
-`cfm tunnel token` refreshes the Tunnel Token into its protected local file. It intentionally does not print the raw token.
+`cfm tunnel token` refreshes the Token into its protected account-scoped file and never prints the raw value.
 
 ### Delete a remotely-managed Tunnel
 
 ```bash
 cfm tunnel delete company-a project-dev
-```
-
-The command requires explicit confirmation. Automation may use:
-
-```bash
 cfm tunnel delete company-a project-dev --yes
 ```
 
-This is different from `cfm remove`, which only removes local state.
+Remote deletion differs from `cfm remove`, which is local-only.
 
 ## Published hostname routes
 
@@ -168,7 +268,7 @@ cfm route list company-a project-dev
 
 ### Add/update hostname → origin
 
-Without DNS mutation:
+Route only:
 
 ```bash
 cfm route add company-a project-dev \
@@ -176,7 +276,7 @@ cfm route add company-a project-dev \
   --url http://localhost:3001
 ```
 
-Also create/update the DNS CNAME:
+Route plus DNS:
 
 ```bash
 cfm route add company-a project-dev \
@@ -185,7 +285,7 @@ cfm route add company-a project-dev \
   --dns
 ```
 
-When `--dns` is enabled, `cfm` resolves the Zone ID in this order:
+Zone resolution order:
 
 ```text
 1. --zone-id <ZONE_ID>
@@ -193,29 +293,7 @@ When `--dns` is enabled, `cfm` resolves the Zone ID in this order:
 3. automatic hostname-based Zone discovery
 ```
 
-Automatic discovery checks the full hostname and then parent domains until a matching Cloudflare Zone is found, for example:
-
-```text
-api-dev.example.com
-       ↓
-example.com
-```
-
-Automatic discovery uses Cloudflare `GET /zones` and requires Zone read access for the target Zone. DNS record creation/update separately requires DNS edit access for that Zone.
-
-If you intentionally do not grant Zone Read, provide the Zone explicitly:
-
-```bash
-cfm route add company-a project-dev \
-  --hostname api-dev.example.com \
-  --url http://localhost:3001 \
-  --dns \
-  --zone-id <ZONE_ID>
-```
-
-This skips Zone discovery, but it does **not** skip the DNS edit permission requirement.
-
-Cloudflare can return error code `10000` (`Authentication error`) even when the HTTP response status is 200. `cfm` v0.2.2 recognizes that as an authentication/authorization failure and prints the relevant Zone/DNS permission guidance instead of only the raw Cloudflare message.
+Automatic discovery requires Zone read access; DNS record changes separately require DNS edit access for the target Zone.
 
 ### Remove a route
 
@@ -224,7 +302,7 @@ cfm route remove company-a project-dev \
   --hostname api-dev.example.com
 ```
 
-Also remove matching DNS records. The same Zone resolution rules apply:
+Also remove matching DNS records:
 
 ```bash
 cfm route remove company-a project-dev \
@@ -232,11 +310,9 @@ cfm route remove company-a project-dev \
   --dns
 ```
 
-Use `--zone-id <ZONE_ID>` to bypass automatic Zone discovery.
+## `cfm expose`
 
-## `cfm expose` — Phase 4 convenience flow
-
-Create or reuse a managed Tunnel, configure a route/DNS, and start the connector:
+Create or reuse a managed Tunnel, configure route/DNS, and start the connector:
 
 ```bash
 cfm expose company-a \
@@ -245,7 +321,7 @@ cfm expose company-a \
   --port 3001
 ```
 
-Equivalent origin form:
+Equivalent URL form:
 
 ```bash
 cfm expose company-a \
@@ -257,24 +333,16 @@ cfm expose company-a \
 Options:
 
 ```text
---zone-id <id>   Explicitly select a Zone and bypass auto-discovery
---no-dns         Configure Tunnel route only; do not touch DNS
---no-start       Provision/configure only; do not start cloudflared
+--zone-id <id>   Explicit Zone ID
+--no-dns         Do not mutate DNS
+--no-start       Do not start cloudflared
 ```
 
-Without `--zone-id`, `cfm expose` uses the account default Zone ID when configured and otherwise attempts hostname-based Zone discovery.
+`cfm expose` does not silently adopt a token-only profile.
 
-`cfm expose` reuses only `adopted` or `provisioned` profiles. A `token-only` profile must be explicitly adopted first; the convenience command will not silently attach or replace an existing Tunnel.
+## Existing v0.1/v0.2 users
 
-## Upgrade behavior from v0.1
-
-A user who previously ran:
-
-```bash
-cfm add company-a
-```
-
-can upgrade to v0.2 and immediately continue:
+Existing profile aliases continue to work after v0.3 migration:
 
 ```bash
 cfm start company-a
@@ -282,13 +350,14 @@ cfm status company-a
 cfm logs company-a
 ```
 
-No Account API Token or re-registration is required. The existing token file path is preserved during migration.
+The **credential path may change**, but the profile alias and Token value do not.
 
-If API management is desired later:
+Use:
 
 ```bash
-cfm account add company-a
-cfm tunnel adopt company-a company-a
+cfm migrate --dry-run
 ```
 
-See [Architecture](./ARCHITECTURE.md), [Security](./SECURITY.md), and [Troubleshooting](./TROUBLESHOOTING.md).
+before upgrading an important machine if you want to inspect every planned file relocation.
+
+See [Configuration](./CONFIGURATION.md), [Security](./SECURITY.md), [Upgrading](./UPGRADING.en.md), and [Troubleshooting](./TROUBLESHOOTING.md).

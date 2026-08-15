@@ -17,11 +17,11 @@
 
 ---
 
+> この日本語版は root `README.md` と同じ情報構造を維持し、install / upgrade / security / Quick Start を同期します。
+
 ## なぜこのツールが必要か
 
 複数の会社を扱うと、Cloudflare Account、Domain、Tunnel Token、API Token、localhost port、`cloudflared` process も複数になります。
-
-`cfm` はクライアント間の security boundary を維持しながら、ローカル操作を 1 つのワークフローにまとめます。
 
 ```text
 Developer machine
@@ -47,18 +47,14 @@ localhost             localhost             localhost
 
 ### 1. Tunnel Token モード — 最小権限
 
-既存の remotely-managed Tunnel を使う場合：
-
 ```bash
 cfm add company-a
 cfm start company-a
 ```
 
-Account API Token は不要です。
+Account API Token は不要です。v0.3 では Account に未紐付けの token-only profile は `legacy/tunnels/` に保存され、explicit adoption まで Account directory には入りません。
 
 ### 2. Account API モード — 任意の provisioning
-
-CLI から Cloudflare resource を作成・管理する場合：
 
 ```bash
 cfm account add company-a
@@ -70,24 +66,23 @@ cfm route add company-a project-dev \
 cfm start project-dev
 ```
 
-Account API Token と Tunnel Token は別々に保存されます。
+Account API Token と Tunnel Token は別々に保存し、所有する Account directory の下に整理します。
 
 ## 主な特徴
 
-- 複数 Account の分離管理
-- 既存 `cfm add <profile>` ユーザーとの後方互換性
-- 安全な v1 → v2 migration
-- duplicate Tunnel を作らない explicit adoption
-- Tunnel provisioning / remote configuration
-- 任意の DNS automation
-- `--dns` で Zone ID がない場合の hostname からの Cloudflare Zone 自動検出
-- Tunnel / Zone / DNS 権限を分けて診断する v0.2.2 permission diagnostics
-- HTTP 200 でも返る Cloudflare error code `10000` の認識
-- 1 コマンドの `cfm expose`
-- `0600` の secret file
-- raw Tunnel Token を process args に置かない設計
-- `doctor` / `status` / logs
-- runtime npm dependency なし
+- **Multi-account isolation** — Account ごとに local credential boundary を分離。
+- **Account-scoped storage** — `accounts/<account>/api-token` と `accounts/<account>/tunnels/*.token`。
+- **Backward compatibility** — v0.1 / v0.2 profile alias を維持。
+- **安全な schema v3 migration** — backup、recovery、conflict protection。
+- **Migration preview** — `cfm migrate --dry-run`。
+- **Self-upgrade** — v0.3+ では `cfm upgrade`。
+- **Installer abstraction** — 現在の npm/GitHub distribution と将来の Homebrew formula に対応できる設計。
+- **Explicit adoption** — duplicate remote Tunnel を作らず既存 Tunnel を Account に紐付け。
+- Tunnel provisioning、hostname routes、任意 DNS automation、Zone discovery。
+- Tunnel / Zone / DNS を分けた permission diagnostics。
+- `cfm expose` による 1 コマンド workflow。
+- mode `0600` credential file、raw Tunnel Token を process args に置かない設計。
+- runtime npm dependency なし。
 
 ## 必要要件
 
@@ -104,16 +99,16 @@ brew install cloudflared
 
 ## インストール
 
-`main` から最新版をインストール：
+最新 `main`：
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-特定の release tag をインストール：
+v0.3.0：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 ```
 
 確認：
@@ -123,27 +118,86 @@ cfm --version
 cfm --help
 ```
 
+> Homebrew distribution は今後の予定です。v0.3 に Homebrew updater adapter があることは formula/tap が公開済みという意味ではありません。
+
 ## バージョン更新
 
-GitHub からインストールした場合は、`main` を再インストールすれば更新できます：
+### v0.2.x から最初の 1 回
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
+cfm migrate --dry-run
+cfm migrate
 ```
 
-特定 release に固定する場合：
+### v0.3 以降
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm upgrade
 ```
 
-Profile、Account API Token、Tunnel Token、runtime state、logs は npm package directory の外に保存されるため、CLI を再インストールしても削除されません。
+Preview：
 
-v0.1 → v0.2 では、最初の config 読み込み時に v1 metadata をバックアップし、既存 profile を `token-only` に migration し、Tunnel Token path を維持します。
+```bash
+cfm upgrade --dry-run
+```
 
-重要な開発環境を更新する前に [Upgrade guide](./UPGRADING.ja.md) を確認してください。
+確認省略：
+
+```bash
+cfm upgrade --yes
+```
+
+開発中 `main`：
+
+```bash
+cfm upgrade --channel main
+```
+
+現在の npm/GitHub stable channel は最新 GitHub Release tag を解決し、その tag をインストールします。Updater は shell string interpolation を使わず、成功後に `cfm migrate` を実行します。
+
+詳細は [Upgrade guide](./UPGRADING.ja.md) を参照してください。
+
+## v0.3 Account-scoped storage
+
+```text
+~/.config/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       └── project-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
+```
+
+API-managed Tunnel credential は所有する Account の下に配置されます。未紐付け token-only profile は `legacy/tunnels/` に残ります。
+
+## v0.1 / v0.2 からの安全な Migration
+
+```bash
+cfm migrate --dry-run
+cfm migrate
+```
+
+Migration は alias と credential value を維持しながら file path を変更します。古い metadata を置き換える前に version-specific backup を作り、途中停止から recovery でき、異なる内容の destination credential は上書きしません。
+
+Profile command はそのままです：
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
 
 ## Quick Start：既存 Tunnel
 
@@ -154,6 +208,12 @@ cfm start company-a
 cfm status company-a
 ```
 
+Token-only credential：
+
+```text
+legacy/tunnels/company-a.token
+```
+
 Dashboard での Token 取得方法は [Tunnel Token ガイド](./TUNNEL_TOKEN.ja.md) を参照してください。
 
 ## Quick Start：CLI から Tunnel を作成
@@ -161,13 +221,26 @@ Dashboard での Token 取得方法は [Tunnel Token ガイド](./TUNNEL_TOKEN.j
 ```bash
 cfm account add company-a
 cfm tunnel create company-a project-dev
+```
+
+Storage：
+
+```text
+accounts/company-a/
+├── api-token
+└── tunnels/
+    └── project-dev.token
+```
+
+Route：
+
+```bash
 cfm route add company-a project-dev \
   --hostname api-dev.example.com \
   --url http://localhost:3001
-cfm start project-dev
 ```
 
-対象 Zone の DNS write 権限がある場合は `--dns` を追加できます：
+DNS も管理：
 
 ```bash
 cfm route add company-a project-dev \
@@ -176,46 +249,54 @@ cfm route add company-a project-dev \
   --dns
 ```
 
-`--dns` 使用時の Zone ID 解決順序：
+Zone 解決順序：
 
 ```text
 1. --zone-id <ZONE_ID>
-2. Account の defaultZoneId
-3. hostname から自動検出
+2. Account defaultZoneId
+3. hostname-based discovery
 ```
 
-自動検出では `api-dev.example.com` → `example.com` のように full hostname から parent domain へ順番に確認し、Cloudflare `GET /zones` を利用します。そのため対象 Zone の Zone Read 権限が必要です。DNS record の作成・更新には別途 DNS Edit 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示できますが、DNS Edit は引き続き必要です。
+Automatic discovery には Zone Read、DNS mutation には別途 DNS Edit/Write が必要です。
 
-Cloudflare は HTTP 200 でも `success: false` と error code `10000`（`Authentication error`）を返すことがあります。v0.2.2 はこれを authentication/authorization failure として認識し、Zone discovery と DNS record management のどこで失敗したかを表示します。
-
-### 権限診断
-
-基本 doctor は Tunnel API access だけを検証します：
+### Permission diagnostics
 
 ```bash
 cfm account doctor company-a
 ```
 
-Zone discovery と DNS read も確認する場合：
+Basic doctor は Tunnel API のみ確認します。Zone discovery と DNS read も確認する場合：
 
 ```bash
 cfm account doctor company-a \
   --hostname api-dev.example.com
 ```
 
-Zone ID が既知の場合：
+Read-only doctor の成功は DNS write permission を保証しません。
+
+## 既存 token-only Tunnel を Adopt
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com \
-  --zone-id <ZONE_ID>
+cfm account add company-a
+cfm tunnel adopt company-a company-a \
+  --tunnel-id <TUNNEL_UUID>
 ```
 
-Doctor は DNS を変更しないため、成功しても DNS write permission までは保証しません。`cfm route ... --dns` には対象 Zone の DNS Edit が必要です。
+Token value を維持しながら：
+
+```text
+legacy/tunnels/company-a.token
+```
+
+から：
+
+```text
+accounts/company-a/tunnels/company-a.token
+```
+
+へ移動します。別の remote Tunnel は作成しません。
 
 ## 1 コマンドで公開：`cfm expose`
-
-`cfm expose` も同じ Zone 解決ルールを使用するため、API Token が Zone を自動検出できる場合は default Zone ID を事前設定する必要はありません：
 
 ```bash
 cfm expose company-a \
@@ -224,37 +305,13 @@ cfm expose company-a \
   --port 3001
 ```
 
-デフォルトでは DNS 設定と connector 起動まで行います。無効にする場合は `--no-dns` / `--no-start` を使います。`token-only` profile を暗黙的に adopt することはありません。
-
-## 既存 v0.1 ユーザー
-
-以前に：
-
-```bash
-cfm add company-a
-```
-
-を実行済みでも、アップグレード後そのまま利用できます：
-
-```bash
-cfm start company-a
-cfm status company-a
-cfm logs company-a
-```
-
-後から API 管理へ移行する場合：
-
-```bash
-cfm account add company-a
-cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
-```
-
-Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォルトでは置き換えません。
+Managed Tunnel の reuse/create、route/DNS、connector startup、public URL 出力まで行います。token-only profile を暗黙に adopt しません。
 
 ## コマンド概要
 
 | Area | Commands |
 | --- | --- |
+| Lifecycle | `migrate`, `upgrade` |
 | Local profiles | `init`, `add`, `remove`, `list` |
 | Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
 | Accounts | `account add/list/show/doctor/remove` |
@@ -262,31 +319,21 @@ Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォル�
 | Routes | `route list/add/remove` |
 | Orchestration | `expose` |
 
-詳細は [Command Reference](./COMMANDS.md) を参照してください。
+詳細は [Command Reference](./COMMANDS.md)。
 
 ## Security Model
 
-```text
-~/.config/cloudflare-management/
-├── config.json
-└── secrets/
-    ├── company-a.token
-    ├── accounts/
-    │   └── company-a.api-token
-    └── tunnels/
-        └── project-dev.token
-```
+- Account API Token と Tunnel Token は別 credential。
+- API-managed credential は Account ごとに分離。
+- 未紐付け profile は `legacy/tunnels/`。
+- Credential file は `0600`。
+- Raw credential は `config.json` に保存せず、通常 output に表示しない。
+- Migration は異なる destination credential を上書きしない。
+- Remote Tunnel deletion は confirmation / `--yes` が必要。
+- `cfm upgrade` は shell interpolation を使わず、unknown/dev install を推測して置換しない。
+- Account/Zone は最小 scope を推奨。
 
-- API Token と Tunnel Token は別 credential。
-- Secret file は `0600`。
-- Raw credential は `config.json` に保存しない。
-- 通常コマンドは raw token を表示しない。
-- Remote Tunnel delete は確認または `--yes` が必要。
-- Account / Zone を限定した最小権限 Token を推奨。
-- Zone 自動検出が必要な場合のみ Zone Read を追加し、不要なら explicit/default Zone ID を利用できます。
-- Tunnel API doctor の成功は DNS Edit 権限を意味しません。
-
-詳細は [Security](./SECURITY.md) を参照してください。
+詳細は [Security](./SECURITY.md)。
 
 ## ドキュメント
 
@@ -295,14 +342,14 @@ Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォル�
 - [繁體中文](./README.zh-TW.md)
 - **日本語**
 - [Upgrade guide](./UPGRADING.ja.md)
-- [Tunnel Token ガイド](./TUNNEL_TOKEN.ja.md)
+- [Tunnel Token guide](./TUNNEL_TOKEN.ja.md)
 - [Architecture](./ARCHITECTURE.md)
-- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
 - [Command Reference](./COMMANDS.md)
 - [Configuration](./CONFIGURATION.md)
 - [Security](./SECURITY.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
 - [Roadmap](./ROADMAP.md)
+- [Changelog](../CHANGELOG.md)
 
 ## 開発
 
@@ -315,7 +362,7 @@ npm run check
 
 ## Scope
 
-`cfm` は Cloudflare Tunnel workflow に特化した CLI であり、汎用 Cloudflare 管理 CLI ではありません。Account、Zone、Tunnel、remote configuration、DNS、Access policy、credential lifecycle の source of truth は Cloudflare です。
+`cfm` は Cloudflare Tunnel workflow に特化した CLI であり、汎用 Cloudflare administration CLI ではありません。Account、Zone、Tunnel、remote configuration、DNS、Access policy、credential lifecycle の source of truth は Cloudflare です。
 
 ## License
 

@@ -2,163 +2,233 @@
 
 [English](./UPGRADING.en.md) · **繁體中文** · [日本語](./UPGRADING.ja.md)
 
-這份文件說明如何更新 `cloudflare-management`，以及更新時既有本機設定會發生什麼事。
-
 ## 先確認目前版本
 
 ```bash
 cfm --version
 ```
 
-## 更新到最新 `main`
+## v0.2.x 使用者第一次升級到 v0.3.0
 
-如果原本是直接從 GitHub 安裝，更新時重新安裝即可：
+`cfm upgrade` 是從 v0.3 才新增的，所以 v0.2.x 還不能直接執行這個指令。第一次請先沿用目前 GitHub/npm 安裝方式：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
 ```
 
-這會更新全域安裝的 CLI package，但不會刪除本機 `cfm` 資料。
-
-## 安裝或鎖定指定 Release
+接著先預覽本機資料 Migration：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm migrate --dry-run
 ```
 
-如果希望不同開發機使用完全相同版本，建議使用 release tag。
-
-## v0.2.2 權限診斷
-
-v0.2.2 改善 Cloudflare Zone / DNS authorization handling。Cloudflare 有可能回傳 HTTP 200，但 response 是 `success: false` 並帶 error code `10000`（`Authentication error`）；`cfm` 現在會正確辨識成 authentication/authorization failure，並指出失敗是在 Zone discovery 還是 DNS record 操作。
-
-基本檢查：
+如果內容正確，可以明確執行：
 
 ```bash
-cfm account doctor company-a
+cfm migrate
 ```
 
-現在只表示 Tunnel API access 正常，不會再暗示 Zone / DNS 權限也已驗證。
+即使沒有手動執行，之後任何需要讀取舊 config 的 `cfm` 指令也會自動進行 Migration。
 
-如果要額外確認 hostname 的 Zone discovery 與 DNS read：
+## v0.3 之後怎麼更新
+
+之後可以直接使用：
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com
+cfm upgrade
 ```
 
-Doctor 不會修改 DNS，所以成功不代表 DNS write 一定可用；`cfm route ... --dns` 仍需要目標 Zone 的 DNS Edit 權限。
+預設流程會：
 
-## v0.2.1 DNS 行為
+1. 判斷目前安裝方式；
+2. 對目前 GitHub/npm distribution 取得最新穩定 GitHub Release；
+3. 預覽是否需要本機資料 Migration；
+4. 要求確認；
+5. 更新 CLI package；
+6. 使用更新後的 `cfm` 再執行 `cfm migrate`。
 
-需要管理 DNS 時，Zone ID 會依序使用：
+自動確認：
+
+```bash
+cfm upgrade --yes
+```
+
+只看計畫、不做任何異動：
+
+```bash
+cfm upgrade --dry-run
+```
+
+如果刻意要跟 `main`：
+
+```bash
+cfm upgrade --channel main
+```
+
+`main` 是開發中的最新程式碼，不等於正式 release tag。
+
+## 安裝方式與未來 Homebrew
+
+v0.3 開始把更新流程抽成 installer abstraction。
+
+目前正式使用的是：
 
 ```text
-1. --zone-id <ZONE_ID>
-2. Account 的 defaultZoneId
-3. 由 hostname 自動尋找對應 Zone
+npm executable + GitHub repository / release tags
 ```
 
-自動尋找需要目標 Zone 的 Zone Read。DNS record 建立/更新則是獨立的 DNS Edit 權限。如果不想提供 Zone Read，可以明確傳入 `--zone-id <ZONE_ID>`，但 DNS Edit 仍然需要。
+程式也先準備了 Homebrew adapter，讓未來有正式 formula/tap 後，可以沿用同一個：
 
-## 本機資料放在哪裡
+```bash
+cfm upgrade
+```
 
-預設位置：
+但**目前有 adapter 不代表 Homebrew formula 已經正式發布**。在 formula/tap 真正完成前，不要因為看到 `--manager brew` 就認為已經可以透過 Homebrew 安裝。
+
+如果自動判斷錯誤，可以明確指定：
+
+```bash
+cfm upgrade --manager npm
+cfm upgrade --manager brew
+```
+
+只有在你確定原本是怎麼安裝時才建議 override。
+
+## v0.3 新的 Account 資料夾結構
+
+v0.3 會改變的是**credential 的本機路徑**，不是 credential 內容，也不是 profile alias。
 
 ```text
 ~/.config/cloudflare-management/
-~/.local/state/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       └── project-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
 ```
 
-這些目錄不在 npm 全域 package 目錄裡，因此更新或重新安裝 CLI 不會刪除：
+這樣 filesystem 就跟 domain/security boundary 一致：每個 Cloudflare Account 都有自己的資料夾；只有還沒綁定 Account 的 `token-only` profile 會留在 `legacy/tunnels/`。
 
-- local profiles
-- Account API Tokens
-- Tunnel Tokens
-- runtime state
-- logs
+## v1 / v2 → v3 Migration 規則
 
-## v0.1 → v0.2 Migration
+Migration 會：
 
-如果你以前已經使用：
+1. 保留 Account alias 與 profile alias；
+2. 保留 Account API Token / Tunnel Token 的內容；
+3. 在替換舊 metadata 前先建立備份；
+4. 把 Account API Token 移到 `accounts/<account>/api-token`；
+5. 把 `adopted` / `provisioned` Tunnel Token 移到 `accounts/<account>/tunnels/`；
+6. 把尚未綁 Account 的 `token-only` profile 移到 `legacy/tunnels/`；
+7. 以 atomic write 寫入 schema v3；
+8. 如果 destination 已經有不同內容的 secret，直接停止，不會猜哪一份才是正確的。
+
+Migration 也考慮到中途中斷。如果 secret 已經移動，但 config 還停留在 v1/v2，下一次執行會辨識「source 不在、destination 已存在」並繼續完成，而不是建立第二份 credential。
+
+## 原本已經使用 `cfm add` 的人
+
+假設你以前已經：
 
 ```bash
 cfm add company-a
 cfm start company-a
 ```
 
-第一次由 v0.2 讀取設定時會：
-
-1. 讀取既有 v1 metadata；
-2. 在 migration 寫入前建立 `config.v1.backup.json`；
-3. 把既有 profile 遷移為 `managementMode: token-only`；
-4. 保留原本 profile alias；
-5. 保留原本 Tunnel Token file 路徑與內容；
-6. 使用 atomic write 寫入 schema v2。
-
-你**不需要重新輸入 Tunnel Token**，也不需要加入 Account API Token 才能繼續使用舊 profile。
-
-更新後可以直接：
+升級 v0.3 之後仍然直接使用：
 
 ```bash
-cfm status company-a
 cfm start company-a
+cfm status company-a
 cfm logs company-a
 ```
 
-## 更新後可選擇把既有 Tunnel 納入 API 管理
+`company-a` 這個 profile alias 不會改，Tunnel Token 的值也不會改；只有 token file 會移到新的 v0.3 storage layout。
 
-如果之後希望同一條既有 remote Tunnel 可以由 `cfm` 透過 API 管理：
+## 升級後再 Adopt 到 Account
+
+如果之後想讓同一條既有 Tunnel 進入 API 管理：
 
 ```bash
 cfm account add company-a
 cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
 ```
 
-Adoption 不會建立新的 Tunnel，也不會預設替換原本的 Tunnel Token。
-
-## 升級前建議檢查
-
-重要開發機建議先執行：
-
-```bash
-cfm --version
-cfm status
-cfm doctor
-```
-
-你也可以自行備份：
+Token value 會保留，但檔案會從：
 
 ```text
-~/.config/cloudflare-management/config.json
+legacy/tunnels/company-a.token
 ```
 
-請不要把 secret file 複製到公開 Git repository、Issue、PR 或公開聊天內容。
+移到：
 
-## Rollback
+```text
+accounts/company-a/tunnels/company-a.token
+```
 
-要重新安裝目前 patch release：
+Adoption 不會建立第二條 remote Tunnel。
+
+## 手動安裝 / 更新仍然支援
+
+從 `main` 安裝：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
+npm install -g github:AdemKao/cloudflare-management
 ```
 
-但要注意：一旦 schema v2 已經寫入，舊版只認得 schema v1 的 CLI 不一定能正確讀取。通常應優先升級到修正版；只有在你理解影響時，才考慮還原 migration 前的 metadata backup。
+鎖定 v0.3.0：
 
-## 更新後排查問題
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
+```
+
+本機 config / credentials 都不在 npm package 目錄裡，所以重新安裝 package 不會刪除這些資料。
+
+## 重要開發機建議升級流程
+
+先檢查：
 
 ```bash
 cfm --version
-cfm doctor
 cfm status
+cfm doctor
+cfm migrate --dry-run
 ```
 
-API / DNS mode 可以再跑：
+再更新並驗證：
 
 ```bash
-cfm account doctor company-a --hostname api-dev.example.com
+cfm upgrade
+cfm --version
+cfm doctor
+```
+
+## Rollback 注意事項
+
+你仍然可以重新安裝舊 tag，但 schema v3 寫入之後，只認得 v2 storage layout 的舊 CLI 不一定能正確讀取新的 config/path。
+
+通常應優先做 forward fix。Migration metadata backup 會放在：
+
+```text
+~/.config/cloudflare-management/backups/
+```
+
+不要只還原舊 `config.json`，卻沒有一起確認 credential 現在實際位在哪裡。
+
+## 更新問題排查
+
+```bash
+cfm migrate --dry-run
+cfm upgrade --dry-run
 ```
 
 再參考 [Troubleshooting](./TROUBLESHOOTING.md)。
