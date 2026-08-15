@@ -148,11 +148,13 @@ export class CloudflareClient {
 
 export function formatCloudflareError(error) {
   if (!(error instanceof CloudflareApiError)) return error.message;
+  if (Number(error.code) === 10000) return `Cloudflare authentication/authorization failed (code 10000): ${error.message}`;
   if (error.status === 401) return `Cloudflare authentication failed (401): ${error.message}`;
   if (error.status === 403) return `Cloudflare permission denied (403): ${error.message}`;
   if (error.status === 404) return `Cloudflare resource not found (404): ${error.message}`;
   if (error.status === 409) return `Cloudflare resource conflict (409): ${error.message}`;
   if (error.status === 429) return `Cloudflare rate limit reached (429): ${error.message}`;
   if (error.status && error.status >= 500) return `Cloudflare service error (${error.status}): ${error.message}`;
+  if (error.code != null) return `Cloudflare API error (code ${error.code}): ${error.message}`;
   return error.message;
 }
