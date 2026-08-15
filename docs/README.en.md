@@ -245,6 +245,7 @@ See [Security](./SECURITY.md).
 - [Security](./SECURITY.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
 - [Roadmap](./ROADMAP.md)
+- [Changelog](../CHANGELOG.md)
 
 ## Development
 
