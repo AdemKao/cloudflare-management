@@ -84,6 +84,7 @@ Account API Token 與 Tunnel Token 會分開保存。
 - **Published Hostname 管理** — 設定 hostname → origin 規則。
 - **可選 DNS 自動化** — 只有在明確要求且 API Token 有權限時才建立/移除 CNAME。
 - **自動 Zone 判斷** — 使用 `--dns` 且沒有提供 Zone ID 時，`cfm` 可以從 hostname 自動找出對應 Cloudflare Zone。
+- **權限感知診斷** — v0.2.2 會區分 Tunnel、Zone、DNS 權限，並辨識 Cloudflare error code `10000`。
 - **一條指令公開服務** — `cfm expose` 可組合 Tunnel + route + DNS + connector startup。
 - **Secret 保護** — Token 保存於 repo 外，檔案權限為 `0600`。
 - **Process args 不放 raw Tunnel Token** — 使用 `cloudflared tunnel run --token-file ...`。
@@ -114,7 +115,7 @@ npm install -g github:AdemKao/cloudflare-management
 安裝指定 release tag：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 確認安裝：
@@ -136,7 +137,7 @@ cfm --version
 如果要鎖定指定 release：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
@@ -215,15 +216,36 @@ api-dev.example.com
 example.com
 ```
 
-這個自動尋找流程會呼叫 Cloudflare `GET /zones`，因此 API Token 需要目標 Zone 的 `Zone:Zone:Read`。建立或更新 DNS record 仍然需要對應的 DNS write 權限。如果你刻意不想給 Zone Read，就直接使用：
+自動尋找需要目標 Zone 的 Zone Read 權限；建立或更新 DNS record 則是另一個獨立的 DNS Edit 權限。如果你刻意不想給 Zone Read，就直接使用 `--zone-id <ZONE_ID>`，但 DNS Edit 權限仍然需要。
+
+Cloudflare 有可能回傳 HTTP 200，但 response 內容是 `success: false` 並帶 error code `10000`（`Authentication error`）。`cfm` v0.2.2 會把它辨識成 authentication/authorization failure，而不是只輸出模糊的 `Authentication error`。
+
+### 修改 DNS 前先做權限診斷
+
+只執行：
 
 ```bash
-cfm route add company-a project-dev \
+cfm account doctor company-a
+```
+
+現在只會宣告 **Tunnel API credential OK**，不再誤導成所有 Cloudflare 權限都正常。
+
+如果要額外確認 hostname 對應 Zone 是否能被找到，以及是否能讀取 DNS record：
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+如果已經知道 Zone ID，也可以跳過 auto-discovery：
+
+```bash
+cfm account doctor company-a \
   --hostname api-dev.example.com \
-  --url http://localhost:3001 \
-  --dns \
   --zone-id <ZONE_ID>
 ```
+
+Doctor 不會修改 DNS，因此 doctor 成功只代表 Zone discovery / DNS read 正常，**不代表 DNS write 一定成功**。`cfm route ... --dns` 仍然需要目標 Zone 的 DNS Edit 權限。
 
 最後啟動 connector：
 
@@ -348,7 +370,8 @@ Runtime data：
 - 正常指令不會輸出 raw token。
 - Remote Tunnel delete 需要確認或 `--yes`。
 - 不同客戶應使用限制到特定 Account / Zone 的最小權限 Token，不要共用跨客戶的高權限 credential。
-- 只有需要自動判斷 Zone 時才需要 `Zone:Zone:Read`；如果改用明確的 `--zone-id` 或 account default Zone ID，就不需要靠 Zone listing 來判斷。
+- 只有需要自動判斷 Zone 時才需要 Zone Read；如果改用明確的 `--zone-id` 或 account default Zone ID，就不需要靠 Zone listing 來判斷。
+- Tunnel API doctor 成功不代表 DNS 權限一定存在；DNS automation 仍需要目標 Zone 的 DNS Edit。
 
 完整說明請看 [Security](./SECURITY.md)。
 
@@ -377,7 +400,7 @@ npm link
 npm run check
 ```
 
-測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention、adoption 與 DNS Zone 自動判斷等情境，Cloudflare API 測試使用 mocked response。
+測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention、adoption、DNS Zone 自動判斷、code `10000` authorization handling 與 permission diagnostics 等情境，Cloudflare API 測試使用 mocked response。
 
 ## 專案範圍
 
