@@ -3,16 +3,16 @@ import assert from 'node:assert/strict';
 import { parseArgs, validateName } from '../src/cli.js';
 
 test('parseArgs parses command, positional args, and options', () => {
-  const result = parseArgs(['logs', 'claire', '--follow']);
+  const result = parseArgs(['logs', 'company-a', '--follow']);
   assert.equal(result.command, 'logs');
-  assert.deepEqual(result.positionals, ['claire']);
+  assert.deepEqual(result.positionals, ['company-a']);
   assert.equal(result.options.follow, true);
 });
 
 test('parseArgs parses option values', () => {
-  const result = parseArgs(['add', 'client-b', '--token-file', '/tmp/token']);
+  const result = parseArgs(['add', 'company-b', '--token-file', '/tmp/token']);
   assert.equal(result.command, 'add');
-  assert.deepEqual(result.positionals, ['client-b']);
+  assert.deepEqual(result.positionals, ['company-b']);
   assert.equal(result.options['token-file'], '/tmp/token');
 });
 
