@@ -1,12 +1,51 @@
-# cloudflare-management
+<div align="center">
 
-[English](./README.en.md) · [繁體中文](./README.zh-TW.md) · **日本語** · [ルート README に戻る](../README.md)
+# ☁️ Cloudflare Management
 
-`cloudflare-management`（`cfm`）は、複数の会社・クライアントの Cloudflare Tunnel を 1 台の開発マシンから管理するためのローカル CLI です。v0.2 では従来の Tunnel Token モードを維持しつつ、Cloudflare Account API を使った Tunnel 作成、hostname → origin 設定、任意の DNS 管理を追加します。
+**1 台の開発マシンから、複数クライアントの Cloudflare Tunnel を安全に管理・作成・公開します。**
+
+複数の会社やクライアントを扱う開発者、フリーランス、コンサルタント向けの軽量 CLI です。公式 `cloudflared` connector と Cloudflare API を使い、再現性が高く権限境界の明確なワークフローを提供します。
+
+[English](../README.md) · [繁體中文](./README.zh-TW.md) · **日本語**
+
+[![CI](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml/badge.svg)](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+</div>
+
+---
+
+## なぜこのツールが必要か
+
+複数の会社を扱うと、Cloudflare Account、Domain、Tunnel Token、API Token、localhost port、`cloudflared` process も複数になります。
+
+`cfm` はクライアント間の security boundary を維持しながら、ローカル操作を 1 つのワークフローにまとめます。
+
+```text
+Developer machine
+      │
+     cfm
+      │
+ ┌────┼───────────────┐
+ ▼    ▼               ▼
+A     B               C
+│     │               │
+Cloudflare Account A  Cloudflare Account B  Cloudflare Account C
+│                     │                     │
+Tunnels / routes      Tunnels / routes      Tunnels / routes
+│                     │                     │
+cloudflared            cloudflared            cloudflared
+│                     │                     │
+localhost             localhost             localhost
+```
+
+`cfm` は **`cloudflared` を置き換えません**。Tunnel protocol も再実装しません。
 
 ## 2 つの動作モード
 
-### Tunnel Token モード
+### 1. Tunnel Token モード — 最小権限
 
 既存の remotely-managed Tunnel を使う場合：
 
@@ -15,29 +54,44 @@ cfm add company-a
 cfm start company-a
 ```
 
-Account API Token は不要です。v0.1 と互換性があります。
+Account API Token は不要です。
 
-### Account API モード
+### 2. Account API モード — 任意の provisioning
 
-CLI から Cloudflare リソースを作成・管理する場合：
+CLI から Cloudflare resource を作成・管理する場合：
 
 ```bash
 cfm account add company-a
-cfm tunnel create company-a solana-dev
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns
-cfm start solana-dev
+cfm start project-dev
 ```
 
 Account API Token と Tunnel Token は別々に保存されます。
 
-## 必要要件とインストール
+## 主な特徴
+
+- 複数 Account の分離管理
+- 既存 `cfm add <profile>` ユーザーとの後方互換性
+- 安全な v1 → v2 migration
+- duplicate Tunnel を作らない explicit adoption
+- Tunnel provisioning / remote configuration
+- 任意の DNS automation
+- 1 コマンドの `cfm expose`
+- `0600` の secret file
+- raw Tunnel Token を process args に置かない設計
+- `doctor` / `status` / logs
+- runtime npm dependency なし
+
+## 必要要件
 
 - macOS または Linux
 - Node.js 20+
 - `cloudflared` が `PATH` から実行可能
+- 使用モードに応じた Cloudflare 権限
 
 macOS：
 
@@ -45,16 +99,18 @@ macOS：
 brew install cloudflared
 ```
 
-`main` からインストール：
+## インストール
+
+`main` から最新版をインストール：
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-v0.2 PR をマージ前に試す場合：
+特定の release tag をインストール：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#feat/v0.2-api-management
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
 ```
 
 確認：
@@ -64,9 +120,29 @@ cfm --version
 cfm --help
 ```
 
-## 既存 Tunnel のクイックスタート
+## バージョン更新
 
-Cloudflare から Tunnel Token を取得した後：
+GitHub からインストールした場合は、`main` を再インストールすれば更新できます：
+
+```bash
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
+```
+
+特定 release に固定する場合：
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
+cfm --version
+```
+
+Profile、Account API Token、Tunnel Token、runtime state、logs は npm package directory の外に保存されるため、CLI を再インストールしても削除されません。
+
+v0.1 → v0.2 では、最初の config 読み込み時に v1 metadata をバックアップし、既存 profile を `token-only` に migration し、Tunnel Token path を維持します。
+
+重要な開発環境を更新する前に [Upgrade guide](./UPGRADING.ja.md) を確認してください。
+
+## Quick Start：既存 Tunnel
 
 ```bash
 cfm init
@@ -77,68 +153,39 @@ cfm status company-a
 
 Dashboard での Token 取得方法は [Tunnel Token ガイド](./TUNNEL_TOKEN.ja.md) を参照してください。
 
-## Tunnel がない場合：CLI から作成
-
-Cloudflare Account を登録します：
+## Quick Start：CLI から Tunnel を作成
 
 ```bash
 cfm account add company-a
-```
-
-非対話形式：
-
-```bash
-cfm account add company-a \
-  --account-id <ACCOUNT_ID> \
-  --token-file ~/.secrets/company-a-api-token \
-  --zone-id <OPTIONAL_ZONE_ID>
-```
-
-Tunnel を作成：
-
-```bash
-cfm tunnel create company-a solana-dev
-```
-
-hostname → localhost を設定：
-
-```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
+cfm start project-dev
 ```
 
-API Token に対象 Zone の DNS Edit 権限がある場合のみ `--dns` を追加してください。
+DNS 権限がある場合のみ `--dns` を追加してください。
 
-## `cfm expose`
-
-Phase 4 の高レベルコマンド：
+## 1 コマンドで公開：`cfm expose`
 
 ```bash
 cfm expose company-a \
-  --name solana-dev \
-  --hostname webhook-dev.example.com \
+  --name project-dev \
+  --hostname api-dev.example.com \
   --port 3001
 ```
 
-デフォルトでは DNS 設定と connector 起動まで行います。
+デフォルトでは DNS 設定と connector 起動まで行います。無効にする場合は `--no-dns` / `--no-start` を使います。`token-only` profile を暗黙的に adopt することはありません。
 
-```text
---no-dns    DNS を変更しない
---no-start  cloudflared を起動しない
-```
+## 既存 v0.1 ユーザー
 
-`cfm expose` は `adopted` / `provisioned` Tunnel を再利用します。`token-only` profile を暗黙的に adopt することはありません。
-
-## すでに `cfm add company-a` を使っている場合
-
-v0.1 で：
+以前に：
 
 ```bash
 cfm add company-a
 ```
 
-を実行済みでも、v0.2 へアップグレード後そのまま利用できます：
+を実行済みでも、アップグレード後そのまま利用できます：
 
 ```bash
 cfm start company-a
@@ -146,80 +193,29 @@ cfm status company-a
 cfm logs company-a
 ```
 
-既存 profile は schema v2 へ次のように移行されます：
-
-```text
-managementMode: token-only
-account: null
-tunnelId: null
-既存 tokenFile のパスを維持
-```
-
-Tunnel Token の再入力や Account API Token は不要です。
-
-## 既存 Tunnel を API 管理へ移行
-
-新しい Tunnel を作らずに `adopt` します：
+後から API 管理へ移行する場合：
 
 ```bash
 cfm account add company-a
-cfm tunnel adopt company-a company-a
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
 ```
 
-自動判定が一意でない場合：
+Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォルトでは置き換えません。
 
-```bash
-cfm tunnel adopt company-a company-a \
-  --tunnel-id <TUNNEL_UUID>
-```
+## コマンド概要
 
-Adoption は既存 Tunnel Token をデフォルトで置き換えません。
-
-## Tunnel の管理状態
-
-```text
-token-only   手動 / v0.1 Tunnel。ローカル Tunnel Token のみ既知
-adopted      既存 Tunnel を Account + Tunnel ID に明示的に関連付け
-provisioned  cfm が Cloudflare API から作成した Tunnel
-```
-
-## 主なコマンド
-
-```bash
-# Local / token-only
-cfm add company-a
-cfm list
-cfm start company-a
-cfm stop company-a
-cfm restart company-a
-cfm status
-cfm logs company-a --follow
-cfm doctor company-a
-
-# Account
-cfm account add company-a
-cfm account list
-cfm account show company-a
-cfm account doctor company-a
-cfm account remove company-a --yes
-
-# Tunnel
-cfm tunnel list company-a
-cfm tunnel create company-a solana-dev
-cfm tunnel adopt company-a company-a
-cfm tunnel show company-a solana-dev
-cfm tunnel token company-a solana-dev
-cfm tunnel delete company-a solana-dev --yes
-
-# Route
-cfm route list company-a solana-dev
-cfm route add company-a solana-dev --hostname webhook-dev.example.com --url http://localhost:3001
-cfm route remove company-a solana-dev --hostname webhook-dev.example.com
-```
+| Area | Commands |
+| --- | --- |
+| Local profiles | `init`, `add`, `remove`, `list` |
+| Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
+| Accounts | `account add/list/show/doctor/remove` |
+| Tunnels | `tunnel list/create/adopt/show/token/delete` |
+| Routes | `route list/add/remove` |
+| Orchestration | `expose` |
 
 詳細は [Command Reference](./COMMANDS.md) を参照してください。
 
-## ローカルデータとセキュリティ
+## Security Model
 
 ```text
 ~/.config/cloudflare-management/
@@ -229,30 +225,28 @@ cfm route remove company-a solana-dev --hostname webhook-dev.example.com
     ├── accounts/
     │   └── company-a.api-token
     └── tunnels/
-        └── solana-dev.token
+        └── project-dev.token
 ```
 
-```text
-~/.local/state/cloudflare-management/
-├── logs/
-└── runtime/
-```
-
+- API Token と Tunnel Token は別 credential。
 - Secret file は `0600`。
-- API Token と Tunnel Token は分離。
-- Raw token は `config.json` に保存しない。
+- Raw credential は `config.json` に保存しない。
 - 通常コマンドは raw token を表示しない。
-- `cloudflared` は `--token-file` で起動。
-- Remote Tunnel の削除には確認または `--yes` が必要。
-- クライアントごとに Account / Zone を限定した最小権限 Token を推奨。
+- Remote Tunnel delete は確認または `--yes` が必要。
+- Account / Zone を限定した最小権限 Token を推奨。
 
 詳細は [Security](./SECURITY.md) を参照してください。
 
 ## ドキュメント
 
+- [Documentation index](./README.md)
+- [English guide](./README.en.md)
+- [繁體中文](./README.zh-TW.md)
+- **日本語**
+- [Upgrade guide](./UPGRADING.ja.md)
 - [Tunnel Token ガイド](./TUNNEL_TOKEN.ja.md)
 - [Architecture](./ARCHITECTURE.md)
-- [v0.2 API Management](./V0.2_API_MANAGEMENT.md)
+- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
 - [Command Reference](./COMMANDS.md)
 - [Configuration](./CONFIGURATION.md)
 - [Security](./SECURITY.md)
@@ -267,3 +261,11 @@ cd cloudflare-management
 npm link
 npm run check
 ```
+
+## Scope
+
+`cfm` は Cloudflare Tunnel workflow に特化した CLI であり、汎用 Cloudflare 管理 CLI ではありません。Account、Zone、Tunnel、remote configuration、DNS、Access policy、credential lifecycle の source of truth は Cloudflare です。
+
+## License
+
+[MIT](../LICENSE) © 2026 Adem Kao
