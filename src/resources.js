@@ -17,27 +17,34 @@ export async function addAccount(alias, { accountId, apiToken, zoneId = null, fe
   if (zoneId) validateZoneId(zoneId);
   if (!apiToken) throw new Error('Cloudflare API Token is required.');
   const config = await loadConfig({ paths });
-  if (config.accounts[alias] && !force) throw new Error(`Account alias "${alias}" already exists. Use --force to replace it.`);
+  const previous = config.accounts[alias] ?? null;
+  if (previous && !force) throw new Error(`Account alias "${alias}" already exists. Use --force to replace it.`);
+
+  const client = new CloudflareClient({ accountId, apiToken, fetchImpl });
+  await client.verifyAccount();
 
   const tokenFile = accountTokenPath(alias, paths);
-  await writeSecret(tokenFile, apiToken);
-  const client = new CloudflareClient({ accountId, apiToken, fetchImpl });
-  try {
-    await client.verifyAccount();
-  } catch (error) {
-    if (!config.accounts[alias]) await fsp.rm(tokenFile, { force: true });
-    throw error;
+  let previousToken = null;
+  if (previous?.apiTokenFile) {
+    try { previousToken = await readSecret(previous.apiTokenFile); } catch { previousToken = null; }
   }
 
+  await writeSecret(tokenFile, apiToken);
   const now = new Date().toISOString();
   config.accounts[alias] = {
     accountId,
     apiTokenFile: tokenFile,
     defaultZoneId: zoneId || null,
-    createdAt: config.accounts[alias]?.createdAt ?? now,
+    createdAt: previous?.createdAt ?? now,
     updatedAt: now,
   };
-  await saveConfig(config, paths);
+  try {
+    await saveConfig(config, paths);
+  } catch (error) {
+    if (previousToken != null) await writeSecret(tokenFile, previousToken).catch(() => {});
+    else await fsp.rm(tokenFile, { force: true }).catch(() => {});
+    throw error;
+  }
   return config.accounts[alias];
 }
 
@@ -140,9 +147,13 @@ export async function adoptTunnel(accountAlias, profileName, { tunnelId = null, 
     [remote] = matches;
   }
 
+  const remoteId = validateTunnelId(remote.id);
+  const duplicate = Object.entries(config.tunnels).find(([name, tunnel]) => name !== profileName && tunnel.account === accountAlias && tunnel.tunnelId === remoteId);
+  if (duplicate) throw new Error(`Remote Tunnel ${remoteId} is already attached to local profile "${duplicate[0]}".`);
+
   profile.managementMode = 'adopted';
   profile.account = accountAlias;
-  profile.tunnelId = validateTunnelId(remote.id);
+  profile.tunnelId = remoteId;
   profile.remoteName = remote.name ?? profileName;
   profile.updatedAt = new Date().toISOString();
   await saveConfig(config, paths);
@@ -204,8 +215,7 @@ export async function listRoutes(accountAlias, tunnelName, { fetchImpl = globalT
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
   const client = await clientForAccount(config, accountAlias, { fetchImpl });
   const current = await client.getTunnelConfig(profile.tunnelId);
-  const normalized = normalizeIngress(current);
-  return normalized.config.ingress;
+  return normalizeIngress(current).config.ingress;
 }
 
 export async function addRoute(accountAlias, tunnelName, { hostname, origin, zoneId = null, manageDns = false, fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
@@ -214,6 +224,7 @@ export async function addRoute(accountAlias, tunnelName, { hostname, origin, zon
   const config = await loadConfig({ paths });
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
   const account = config.accounts[accountAlias];
+  const effectiveZoneId = manageDns ? validateZoneId(zoneId || account.defaultZoneId) : null;
   const client = await clientForAccount(config, accountAlias, { fetchImpl });
   const current = await client.getTunnelConfig(profile.tunnelId).catch((error) => {
     if (error?.status === 404) return { config: { ingress: [] } };
@@ -223,13 +234,7 @@ export async function addRoute(accountAlias, tunnelName, { hostname, origin, zon
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   nextRules.push({ hostname, service: origin });
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-
-  if (manageDns) {
-    const effectiveZoneId = zoneId || account.defaultZoneId;
-    if (!effectiveZoneId) throw new Error('DNS management requires --zone-id or a default Zone ID on the account. The Tunnel route was configured, but DNS was not changed.');
-    validateZoneId(effectiveZoneId);
-    await client.upsertTunnelDns(effectiveZoneId, hostname, profile.tunnelId);
-  }
+  if (manageDns) await client.upsertTunnelDns(effectiveZoneId, hostname, profile.tunnelId);
   return { hostname, origin, tunnelId: profile.tunnelId, dnsManaged: manageDns };
 }
 
@@ -238,16 +243,13 @@ export async function removeRoute(accountAlias, tunnelName, { hostname, zoneId =
   const config = await loadConfig({ paths });
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
   const account = config.accounts[accountAlias];
+  const effectiveZoneId = manageDns ? validateZoneId(zoneId || account.defaultZoneId) : null;
   const client = await clientForAccount(config, accountAlias, { fetchImpl });
   const current = await client.getTunnelConfig(profile.tunnelId);
   const normalized = normalizeIngress(current);
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-  if (manageDns) {
-    const effectiveZoneId = zoneId || account.defaultZoneId;
-    if (!effectiveZoneId) throw new Error('DNS removal requires --zone-id or a default Zone ID on the account.');
-    await client.deleteDnsByHostname(validateZoneId(effectiveZoneId), hostname);
-  }
+  if (manageDns) await client.deleteDnsByHostname(effectiveZoneId, hostname);
 }
 
 export async function expose(accountAlias, { name, hostname, origin, port, zoneId = null, manageDns = true, start = true, fetchImpl = globalThis.fetch, paths = appPaths(), startTunnelFn = null } = {}) {
@@ -258,17 +260,24 @@ export async function expose(accountAlias, { name, hostname, origin, port, zoneI
     origin = `http://localhost:${Number(port)}`;
   }
   origin = validateOrigin(origin);
-  let config = await loadConfig({ paths });
-  let profile = config.tunnels[name];
+
+  const initialConfig = await loadConfig({ paths });
+  const existing = initialConfig.tunnels[name];
   let created = false;
-  if (!profile) {
-    profile = await createManagedTunnel(accountAlias, name, { fetchImpl, paths });
+  if (!existing) {
+    await createManagedTunnel(accountAlias, name, { fetchImpl, paths });
     created = true;
   } else {
-    await resolveManagedTunnel(config, accountAlias, name);
+    await resolveManagedTunnel(initialConfig, accountAlias, name);
   }
 
-  await addRoute(accountAlias, name, { hostname, origin, zoneId, manageDns, fetchImpl, paths });
+  try {
+    await addRoute(accountAlias, name, { hostname, origin, zoneId, manageDns, fetchImpl, paths });
+  } catch (error) {
+    if (created) await deleteManagedTunnel(accountAlias, name, { fetchImpl, paths }).catch(() => {});
+    throw error;
+  }
+
   if (start && startTunnelFn) await startTunnelFn(name, { paths });
   return { name, hostname, origin, created, started: Boolean(start && startTunnelFn), url: `https://${hostname}` };
 }
