@@ -2,128 +2,225 @@
 
 [English](./UPGRADING.en.md) · [繁體中文](./UPGRADING.zh-TW.md) · **日本語**
 
-このガイドでは `cloudflare-management` の更新方法と、既存のローカル設定がアップグレード時にどう扱われるかを説明します。
-
 ## 現在のバージョンを確認
 
 ```bash
 cfm --version
 ```
 
-## 最新の `main` へ更新
+## v0.2.x から v0.3.0 へ最初に更新する場合
+
+`cfm upgrade` は v0.3 で追加されるため、v0.2.x から最初の 1 回だけは既存の GitHub/npm インストール方法を使います：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
 ```
 
-## 特定 Release をインストール / 固定
+ローカル storage migration を先に確認：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm migrate --dry-run
 ```
 
-## v0.2.2 権限診断
-
-Cloudflare は HTTP 200 でも `success: false` と error code `10000`（`Authentication error`）を返すことがあります。v0.2.2 はこれを authentication/authorization failure として認識し、Zone discovery または DNS record access のどこで失敗したかを明示します。
-
-基本 doctor は Tunnel API access のみ確認します：
+必要なら明示的に実行：
 
 ```bash
-cfm account doctor company-a
+cfm migrate
 ```
 
-Zone discovery と DNS read も確認する場合：
+手動で実行しなくても、古い config を読む `cfm` コマンドは migration を自動実行します。
+
+## v0.3 以降の更新
+
+以後は：
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com
+cfm upgrade
 ```
 
-Doctor は DNS を変更しないため、成功しても DNS Edit permission までは保証しません。
+デフォルトでは：
 
-## v0.2.1 の DNS 動作
+1. install manager を検出；
+2. 現在の GitHub/npm distribution では最新の安定 GitHub Release を解決；
+3. ローカル migration の必要性を preview；
+4. confirmation；
+5. package update；
+6. 新しくインストールされた CLI で `cfm migrate` を実行。
 
-DNS 管理時の Zone ID 解決順序：
+確認を省略：
+
+```bash
+cfm upgrade --yes
+```
+
+preview のみ：
+
+```bash
+cfm upgrade --dry-run
+```
+
+開発中の `main` を使う場合：
+
+```bash
+cfm upgrade --channel main
+```
+
+`main` は tagged stable release と同じではありません。
+
+## Install manager と将来の Homebrew 対応
+
+v0.3 では updater を installer abstraction として分離しています。
+
+現在実際に利用できる distribution：
 
 ```text
-1. --zone-id <ZONE_ID>
-2. Account の defaultZoneId
-3. hostname から自動検出
+npm executable + GitHub repository / release tags
 ```
 
-自動検出には対象 Zone の Zone Read、DNS record の作成・更新には DNS Edit が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示できますが、DNS Edit は引き続き必要です。
+将来 Homebrew formula/tap を公開した後も同じ `cfm upgrade` UX を使えるよう、Homebrew adapter も用意しています。ただし **adapter があることと、Homebrew formula が公開済みであることは別です**。formula/tap が正式に用意されるまでは Homebrew を現在の install method として扱わないでください。
 
-## ローカルデータの保存場所
+必要な場合のみ manager を明示できます：
+
+```bash
+cfm upgrade --manager npm
+cfm upgrade --manager brew
+```
+
+## v0.3 の Account 単位 storage
+
+v0.3 で変わるのは **credential file の path** です。profile alias と Token の値は変わりません。
 
 ```text
 ~/.config/cloudflare-management/
-~/.local/state/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       └── project-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
 ```
 
-これらは npm global package directory の外にあるため、CLI の更新や再インストールでは profile、Account API Token、Tunnel Token、runtime state、logs は削除されません。
+API 管理対象 credential は所有する Cloudflare Account directory の下に配置されます。まだ Account に紐づいていない `token-only` profile は `legacy/tunnels/` に残ります。
 
-## v0.1 → v0.2 Migration
+## v1 / v2 → v3 Migration
 
-以前に：
+Migration は：
+
+1. Account/profile alias を維持；
+2. Account API Token / Tunnel Token の値を維持；
+3. 古い metadata を置き換える前に backup を作成；
+4. Account API Token を `accounts/<account>/api-token` へ移動；
+5. `adopted` / `provisioned` Tunnel Token を `accounts/<account>/tunnels/` へ移動；
+6. 未紐付け `token-only` profile を `legacy/tunnels/` へ移動；
+7. schema v3 を atomic write；
+8. destination に異なる内容の credential がある場合は上書きせず停止します。
+
+途中で process が終了しても recovery できる設計です。secret が移動済みで config が v1/v2 のままでも、次回は source missing + destination existing を認識して migration を続行します。
+
+## 以前から `cfm add` を使っている場合
+
+以前：
 
 ```bash
 cfm add company-a
 cfm start company-a
 ```
 
-を使っていた場合、v0.2 が最初に config を読み込むと：
-
-1. 既存 v1 metadata を読み込みます。
-2. migration write の前に `config.v1.backup.json` を作成します。
-3. 既存 profile を `managementMode: token-only` へ移行します。
-4. profile alias を維持します。
-5. Tunnel Token file の path と内容を維持します。
-6. schema v2 を atomic write します。
-
-Tunnel Token の再入力や Account API Token の追加は不要です。
-
-更新後：
+を使っていても、v0.3 でそのまま：
 
 ```bash
-cfm status company-a
 cfm start company-a
+cfm status company-a
 cfm logs company-a
 ```
 
-## 更新後に既存 Tunnel を API 管理へ移行する場合
+を利用できます。`company-a` という profile alias と Tunnel Token の値は維持され、Token file の location だけが v0.3 layout へ移動します。
+
+## Migration 後に Account へ Adopt
+
+既存の同じ remote Tunnel を API 管理へ移す場合：
 
 ```bash
 cfm account add company-a
 cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
 ```
 
-Adoption は新しい Tunnel を作成せず、既存 Tunnel Token もデフォルトでは置き換えません。
+Token value は維持しつつ：
 
-## 更新前の推奨チェック
+```text
+legacy/tunnels/company-a.token
+```
+
+から：
+
+```text
+accounts/company-a/tunnels/company-a.token
+```
+
+へ移動します。Adoption は別の remote Tunnel を作成しません。
+
+## 手動 install / update も引き続き利用可能
+
+最新 `main`：
+
+```bash
+npm install -g github:AdemKao/cloudflare-management
+```
+
+v0.3.0 に固定：
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
+```
+
+config/credentials は npm package directory の外にあるため、package の再インストールで削除されません。
+
+## 重要な開発マシンでの推奨手順
+
+更新前：
 
 ```bash
 cfm --version
 cfm status
 cfm doctor
+cfm migrate --dry-run
 ```
 
-## Rollback
+更新後：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-```
-
-schema v2 が一度書き込まれた後は、schema v1 だけを理解する古い CLI がその config を正しく扱えない可能性があります。通常は forward fix を優先してください。
-
-## 更新後のトラブルシューティング
-
-```bash
+cfm upgrade
 cfm --version
 cfm doctor
-cfm status
-cfm account doctor company-a --hostname api-dev.example.com
+```
+
+## Rollback の注意
+
+古い tag を再インストールすること自体はできますが、schema v3 が書き込まれた後は v2 layout しか理解しない古い CLI が新しい config/path を正しく扱えない可能性があります。
+
+通常は forward fix を優先してください。metadata backup は：
+
+```text
+~/.config/cloudflare-management/backups/
+```
+
+に保存されます。credential の現在位置を確認せずに古い `config.json` だけを戻さないでください。
+
+## Troubleshooting
+
+```bash
+cfm migrate --dry-run
+cfm upgrade --dry-run
 ```
 
 その後 [Troubleshooting](./TROUBLESHOOTING.md) を参照してください。
