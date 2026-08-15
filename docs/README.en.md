@@ -77,6 +77,8 @@ Account API Tokens and Tunnel Tokens are stored separately.
 - Tunnel provisioning and remote configuration;
 - optional DNS automation;
 - automatic Cloudflare Zone discovery from the hostname when `--dns` is used without a Zone ID;
+- permission-aware diagnostics for Tunnel vs Zone/DNS access;
+- Cloudflare error code `10000` handling even when HTTP status is 200;
 - one-command `cfm expose` workflow;
 - mode-`0600` secret files;
 - raw Tunnel Tokens kept out of process args;
@@ -107,7 +109,7 @@ npm install -g github:AdemKao/cloudflare-management
 Specific release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 Verify:
@@ -129,7 +131,7 @@ cfm --version
 Or pin a release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
@@ -176,7 +178,34 @@ With `--dns`, Zone selection follows this order:
 3. automatic discovery from the hostname
 ```
 
-Automatic discovery walks from the full hostname toward parent domains, for example `api-dev.example.com` → `example.com`, and calls Cloudflare `GET /zones`. It therefore requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission. If you do not want to grant Zone Read, pass `--zone-id <ZONE_ID>` explicitly.
+Automatic discovery walks from the full hostname toward parent domains, for example `api-dev.example.com` → `example.com`, and calls Cloudflare `GET /zones`. It therefore requires Zone read access for the target Zone. DNS record creation/update separately requires DNS edit access. If you do not want to grant Zone Read, pass `--zone-id <ZONE_ID>` explicitly.
+
+Cloudflare may return `success: false` with error code `10000` (`Authentication error`) while the HTTP response is still 200. v0.2.2 recognizes this as an authentication/authorization failure and prints stage-specific Zone/DNS guidance.
+
+### Permission diagnostics
+
+`cfm account doctor company-a` validates Tunnel API access only:
+
+```bash
+cfm account doctor company-a
+```
+
+To also validate Zone discovery and DNS-read access for a hostname without changing DNS:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+Or bypass Zone discovery with a known ID:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com \
+  --zone-id <ZONE_ID>
+```
+
+A successful doctor does not mutate DNS and therefore does not prove DNS write permission. Route DNS automation still requires DNS edit access for the target Zone.
 
 ## One-command expose workflow
 
@@ -248,7 +277,8 @@ See [Command Reference](./COMMANDS.md).
 - Normal commands do not print raw tokens.
 - Remote Tunnel deletion requires confirmation or `--yes`.
 - Prefer specific Account/Zone scopes over broad cross-client credentials.
-- Grant `Zone:Zone:Read` only if you want automatic Zone discovery; otherwise provide an explicit/default Zone ID.
+- Grant Zone Read only if you want automatic Zone discovery; otherwise provide an explicit/default Zone ID.
+- Tunnel API checks succeeding does not imply DNS edit access exists.
 
 See [Security](./SECURITY.md).
 
