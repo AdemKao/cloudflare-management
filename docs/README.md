@@ -8,14 +8,17 @@ Welcome to the `cloudflare-management` documentation.
 - [繁體中文](./README.zh-TW.md)
 - [日本語](./README.ja.md)
 
-The repository root [README](../README.md) is the primary English project landing page.
+The repository root [README](../README.md) is the primary English project landing page. The localized READMEs follow the same structure so installation, upgrade, quick-start, security, and command information stay consistent across languages.
 
 ## Getting started
 
+- [Upgrade — English](./UPGRADING.en.md)
+- [Upgrade — 繁體中文](./UPGRADING.zh-TW.md)
+- [Upgrade — 日本語](./UPGRADING.ja.md)
 - [Tunnel Token — English](./TUNNEL_TOKEN.en.md)
 - [Tunnel Token — 繁體中文](./TUNNEL_TOKEN.zh-TW.md)
 - [Tunnel Token — 日本語](./TUNNEL_TOKEN.ja.md)
-- [Command Reference](./COMMANDS.md) — v0.2 token-only, Account, Tunnel, Route, and `expose` commands.
+- [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, and `expose` commands.
 
 ## Architecture and operations
 
@@ -24,24 +27,33 @@ The repository root [README](../README.md) is the primary English project landin
 - [Security](./SECURITY.md) — Account API Token vs Tunnel Token handling, least privilege, rotation, deletion, and offboarding.
 - [Configuration](./CONFIGURATION.md) — config, secrets, state, logs, and XDG paths.
 - [Troubleshooting](./TROUBLESHOOTING.md) — common tunnel, localhost, token, API, and hostname failures.
-- [Roadmap](./ROADMAP.md) — completed v0.2 phases and remaining live release-validation checklist.
+- [Roadmap](./ROADMAP.md) — completed phases and future work.
 - [Contributing](../CONTRIBUTING.md) — development workflow and contribution guidelines.
 
 ## Install
 
-From `main`:
+Latest from `main`:
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-Test the v0.2 implementation branch before merge:
+Specific release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#feat/v0.2-api-management
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
 ```
 
-Run diagnostics:
+## Update
+
+```bash
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
+```
+
+Updating the global CLI package does not remove local profiles or credentials because they are stored under the `cloudflare-management` config/state directories rather than inside the npm package installation.
+
+Run diagnostics after an install/update:
 
 ```bash
 cfm doctor
