@@ -19,6 +19,7 @@ The repository root [README](../README.md) is the primary English project landin
 - [Tunnel Token — 繁體中文](./TUNNEL_TOKEN.zh-TW.md)
 - [Tunnel Token — 日本語](./TUNNEL_TOKEN.ja.md)
 - [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, and `expose` commands.
+- [Changelog](../CHANGELOG.md) — version-by-version user-facing changes and upgrade notes.
 
 ## Architecture and operations
 
