@@ -1,27 +1,45 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import process from 'node:process';
-import { spawn, spawnSync } from 'node:child_process';
+import { appPaths, ensureDirectories, loadConfig, saveConfig } from './config.js';
+import { resolveSecret, promptLine, writeSecret } from './secrets.js';
+import { validateName } from './validation.js';
+import { formatCloudflareError, CloudflareApiError } from './cloudflare/client.js';
+import {
+  addAccount,
+  adoptTunnel,
+  createManagedTunnel,
+  deleteManagedTunnel,
+  doctorAccount,
+  expose,
+  listAccounts,
+  listRemoteTunnels,
+  listRoutes,
+  refreshTunnelToken,
+  removeAccount,
+  removeRoute,
+  addRoute,
+  showAccount,
+  showManagedTunnel,
+} from './resources.js';
+import {
+  doctor,
+  printStatus,
+  removeLocalTunnel,
+  showLogs,
+  startAll,
+  startTunnel,
+  stopAll,
+  stopTunnel,
+} from './process.js';
 
-const APP_NAME = 'cloudflare-management';
-
-export function validateName(name) {
-  if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) {
-    throw new Error('Name must contain only letters, numbers, dot, underscore, or hyphen.');
-  }
-  return name;
-}
+export { validateName } from './validation.js';
 
 export function parseArgs(args) {
   const command = args[0] ?? 'help';
   const positionals = [];
   const options = {};
-
   for (let index = 1; index < args.length; index += 1) {
     const value = args[index];
-
     if (value.startsWith('--')) {
       const key = value.slice(2);
       const next = args[index + 1];
@@ -33,449 +51,231 @@ export function parseArgs(args) {
       }
       continue;
     }
-
     positionals.push(value);
   }
-
   return { command, positionals, options };
-}
-
-function appPaths() {
-  const configRoot = process.env.XDG_CONFIG_HOME
-    ? path.join(process.env.XDG_CONFIG_HOME, APP_NAME)
-    : path.join(os.homedir(), '.config', APP_NAME);
-
-  const stateRoot = process.env.XDG_STATE_HOME
-    ? path.join(process.env.XDG_STATE_HOME, APP_NAME)
-    : path.join(os.homedir(), '.local', 'state', APP_NAME);
-
-  return {
-    configRoot,
-    configFile: path.join(configRoot, 'config.json'),
-    secretsRoot: path.join(configRoot, 'secrets'),
-    stateRoot,
-    logsRoot: path.join(stateRoot, 'logs'),
-    runtimeRoot: path.join(stateRoot, 'runtime'),
-  };
-}
-
-async function ensureDirectories() {
-  const paths = appPaths();
-  await fsp.mkdir(paths.configRoot, { recursive: true, mode: 0o700 });
-  await fsp.mkdir(paths.secretsRoot, { recursive: true, mode: 0o700 });
-  await fsp.mkdir(paths.stateRoot, { recursive: true, mode: 0o700 });
-  await fsp.mkdir(paths.logsRoot, { recursive: true, mode: 0o700 });
-  await fsp.mkdir(paths.runtimeRoot, { recursive: true, mode: 0o700 });
-  return paths;
-}
-
-async function loadConfig() {
-  const paths = await ensureDirectories();
-
-  try {
-    const raw = await fsp.readFile(paths.configFile, 'utf8');
-    const parsed = JSON.parse(raw);
-    return {
-      version: 1,
-      tunnels: parsed.tunnels ?? {},
-    };
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    return { version: 1, tunnels: {} };
-  }
-}
-
-async function saveConfig(config) {
-  const paths = await ensureDirectories();
-  const temporary = `${paths.configFile}.tmp`;
-  await fsp.writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  await fsp.rename(temporary, paths.configFile);
-  await fsp.chmod(paths.configFile, 0o600);
-}
-
-function runtimePaths(name) {
-  const paths = appPaths();
-  return {
-    stateFile: path.join(paths.runtimeRoot, `${name}.json`),
-    logFile: path.join(paths.logsRoot, `${name}.log`),
-  };
-}
-
-async function readState(name) {
-  const { stateFile } = runtimePaths(name);
-  try {
-    return JSON.parse(await fsp.readFile(stateFile, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function writeState(name, state) {
-  const { stateFile } = runtimePaths(name);
-  await fsp.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-}
-
-async function deleteState(name) {
-  const { stateFile } = runtimePaths(name);
-  await fsp.rm(stateFile, { force: true });
-}
-
-function isProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function promptHidden(label) {
-  const input = process.stdin;
-  const output = process.stdout;
-
-  if (!input.isTTY || typeof input.setRawMode !== 'function') {
-    throw new Error('Interactive token input requires a TTY. Use --token-file <path> instead.');
-  }
-
-  return new Promise((resolve, reject) => {
-    let value = '';
-    const wasRaw = input.isRaw;
-
-    const cleanup = () => {
-      input.removeListener('data', onData);
-      input.setRawMode(Boolean(wasRaw));
-      input.pause();
-    };
-
-    const onData = (chunk) => {
-      for (const character of chunk) {
-        if (character === '\u0003') {
-          cleanup();
-          output.write('\n');
-          reject(new Error('Cancelled.'));
-          return;
-        }
-
-        if (character === '\r' || character === '\n') {
-          cleanup();
-          output.write('\n');
-          resolve(value.trim());
-          return;
-        }
-
-        if (character === '\u007f' || character === '\b') {
-          if (value.length > 0) {
-            value = value.slice(0, -1);
-            output.write('\b \b');
-          }
-          continue;
-        }
-
-        if (character >= ' ') {
-          value += character;
-          output.write('*');
-        }
-      }
-    };
-
-    output.write(label);
-    input.setEncoding('utf8');
-    input.setRawMode(true);
-    input.resume();
-    input.on('data', onData);
-  });
-}
-
-async function resolveToken(options) {
-  if (typeof options['token-file'] === 'string') {
-    const source = path.resolve(options['token-file']);
-    const token = (await fsp.readFile(source, 'utf8')).trim();
-    if (!token) throw new Error(`Token file is empty: ${source}`);
-    return token;
-  }
-
-  const token = await promptHidden('Tunnel token: ');
-  if (!token) throw new Error('Tunnel token cannot be empty.');
-  return token;
-}
-
-async function addTunnel(name, options) {
-  validateName(name);
-  const config = await loadConfig();
-
-  if (config.tunnels[name] && !options.force) {
-    throw new Error(`Tunnel profile "${name}" already exists. Use --force to replace it.`);
-  }
-
-  const token = await resolveToken(options);
-  const paths = await ensureDirectories();
-  const tokenFile = path.join(paths.secretsRoot, `${name}.token`);
-
-  await fsp.writeFile(tokenFile, `${token}\n`, { mode: 0o600 });
-  await fsp.chmod(tokenFile, 0o600);
-
-  config.tunnels[name] = {
-    tokenFile,
-    createdAt: config.tunnels[name]?.createdAt ?? new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await saveConfig(config);
-  console.log(`Added tunnel profile: ${name}`);
-  console.log(`Token stored locally with mode 600: ${tokenFile}`);
-}
-
-async function getTunnel(name) {
-  validateName(name);
-  const config = await loadConfig();
-  const tunnel = config.tunnels[name];
-  if (!tunnel) throw new Error(`Unknown tunnel profile: ${name}`);
-  return tunnel;
-}
-
-function cloudflaredVersion() {
-  const result = spawnSync('cloudflared', ['--version'], { encoding: 'utf8' });
-  if (result.error) return null;
-  if (result.status !== 0) return null;
-  return (result.stdout || result.stderr || '').trim();
-}
-
-async function tailText(filePath, lineCount = 40) {
-  try {
-    const text = await fsp.readFile(filePath, 'utf8');
-    return text.split(/\r?\n/).slice(-lineCount).join('\n').trim();
-  } catch (error) {
-    if (error.code === 'ENOENT') return '';
-    throw error;
-  }
-}
-
-async function startTunnel(name, { quiet = false } = {}) {
-  const tunnel = await getTunnel(name);
-  const existing = await readState(name);
-
-  if (existing && isProcessAlive(existing.pid)) {
-    if (!quiet) console.log(`${name} is already running (PID ${existing.pid}).`);
-    return;
-  }
-
-  if (!cloudflaredVersion()) {
-    throw new Error('cloudflared is not installed or not available in PATH.');
-  }
-
-  try {
-    await fsp.access(tunnel.tokenFile, fs.constants.R_OK);
-  } catch {
-    throw new Error(`Tunnel token file is missing or unreadable: ${tunnel.tokenFile}`);
-  }
-
-  await ensureDirectories();
-  const { logFile } = runtimePaths(name);
-  const logFd = fs.openSync(logFile, 'a');
-  const child = spawn(
-    'cloudflared',
-    ['tunnel', 'run', '--token-file', tunnel.tokenFile],
-    {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: process.env,
-    },
-  );
-
-  child.unref();
-  fs.closeSync(logFd);
-
-  await writeState(name, {
-    pid: child.pid,
-    startedAt: new Date().toISOString(),
-    logFile,
-  });
-
-  await sleep(700);
-  if (!isProcessAlive(child.pid)) {
-    await deleteState(name);
-    const recentLogs = await tailText(logFile, 20);
-    throw new Error(
-      recentLogs
-        ? `cloudflared exited immediately. Recent logs:\n${recentLogs}`
-        : 'cloudflared exited immediately. Check the tunnel token and Cloudflare configuration.',
-    );
-  }
-
-  if (!quiet) {
-    console.log(`Started ${name} (PID ${child.pid}).`);
-    console.log(`Logs: ${logFile}`);
-  }
-}
-
-async function stopTunnel(name, { quiet = false } = {}) {
-  await getTunnel(name);
-  const state = await readState(name);
-
-  if (!state || !isProcessAlive(state.pid)) {
-    await deleteState(name);
-    if (!quiet) console.log(`${name} is not running.`);
-    return;
-  }
-
-  process.kill(state.pid, 'SIGTERM');
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (!isProcessAlive(state.pid)) break;
-    await sleep(100);
-  }
-
-  await deleteState(name);
-  if (!quiet) console.log(`Stopped ${name}.`);
-}
-
-async function removeTunnel(name) {
-  const tunnel = await getTunnel(name);
-  await stopTunnel(name, { quiet: true });
-  const config = await loadConfig();
-  delete config.tunnels[name];
-  await saveConfig(config);
-  await fsp.rm(tunnel.tokenFile, { force: true });
-  const { logFile } = runtimePaths(name);
-  await fsp.rm(logFile, { force: true });
-  console.log(`Removed tunnel profile: ${name}`);
-}
-
-async function tunnelStatus(name) {
-  const state = await readState(name);
-  if (!state) return { status: 'stopped', pid: '-' };
-  if (!isProcessAlive(state.pid)) {
-    await deleteState(name);
-    return { status: 'stopped', pid: '-' };
-  }
-  return { status: 'running', pid: String(state.pid) };
-}
-
-async function printStatus(nameFilter = null) {
-  const config = await loadConfig();
-  const names = nameFilter ? [nameFilter] : Object.keys(config.tunnels).sort();
-
-  if (nameFilter && !config.tunnels[nameFilter]) {
-    throw new Error(`Unknown tunnel profile: ${nameFilter}`);
-  }
-
-  if (names.length === 0) {
-    console.log('No tunnel profiles configured. Use: cfm add <name>');
-    return;
-  }
-
-  const rows = [];
-  for (const name of names) {
-    const status = await tunnelStatus(name);
-    rows.push({ name, ...status });
-  }
-
-  const nameWidth = Math.max(4, ...rows.map((row) => row.name.length));
-  console.log(`${'NAME'.padEnd(nameWidth)}  STATUS   PID`);
-  for (const row of rows) {
-    console.log(`${row.name.padEnd(nameWidth)}  ${row.status.padEnd(8)} ${row.pid}`);
-  }
-}
-
-async function showLogs(name, follow) {
-  await getTunnel(name);
-  const { logFile } = runtimePaths(name);
-
-  if (!follow) {
-    const logs = await tailText(logFile, 80);
-    console.log(logs || `No logs yet for ${name}.`);
-    return;
-  }
-
-  await fsp.appendFile(logFile, '');
-  await new Promise((resolve, reject) => {
-    const child = spawn('tail', ['-n', '80', '-f', logFile], { stdio: 'inherit' });
-    child.on('error', reject);
-    child.on('exit', () => resolve());
-  });
-}
-
-async function doctor(nameFilter = null) {
-  const config = await loadConfig();
-  const version = cloudflaredVersion();
-  const paths = appPaths();
-
-  console.log(`Node:        ${process.version}`);
-  console.log(`cloudflared: ${version ?? 'NOT FOUND'}`);
-  console.log(`Config:      ${paths.configFile}`);
-
-  const names = nameFilter ? [nameFilter] : Object.keys(config.tunnels).sort();
-  if (nameFilter && !config.tunnels[nameFilter]) {
-    throw new Error(`Unknown tunnel profile: ${nameFilter}`);
-  }
-
-  for (const name of names) {
-    const tunnel = config.tunnels[name];
-    let token = 'OK';
-    try {
-      await fsp.access(tunnel.tokenFile, fs.constants.R_OK);
-      const stat = await fsp.stat(tunnel.tokenFile);
-      if ((stat.mode & 0o077) !== 0) token = 'WARNING: permissions are broader than 600';
-    } catch {
-      token = 'MISSING';
-    }
-    const status = await tunnelStatus(name);
-    console.log(`${name}: ${status.status}; token=${token}`);
-  }
-
-  if (!version) process.exitCode = 1;
-}
-
-async function startAll() {
-  const config = await loadConfig();
-  const names = Object.keys(config.tunnels).sort();
-  if (names.length === 0) {
-    console.log('No tunnel profiles configured.');
-    return;
-  }
-
-  for (const name of names) {
-    try {
-      await startTunnel(name, { quiet: true });
-      console.log(`Started ${name}.`);
-    } catch (error) {
-      console.error(`Failed ${name}: ${error.message}`);
-      process.exitCode = 1;
-    }
-  }
-}
-
-async function stopAll() {
-  const config = await loadConfig();
-  for (const name of Object.keys(config.tunnels).sort()) {
-    try {
-      await stopTunnel(name, { quiet: true });
-      console.log(`Stopped ${name}.`);
-    } catch (error) {
-      console.error(`Failed ${name}: ${error.message}`);
-      process.exitCode = 1;
-    }
-  }
 }
 
 async function packageVersion() {
   const packageUrl = new URL('../package.json', import.meta.url);
-  const data = JSON.parse(await fsp.readFile(packageUrl, 'utf8'));
-  return data.version;
+  return JSON.parse(await fsp.readFile(packageUrl, 'utf8')).version;
+}
+
+async function addLegacyTunnel(name, options, paths = appPaths()) {
+  validateName(name);
+  const config = await loadConfig({ paths });
+  if (config.tunnels[name] && !options.force) {
+    throw new Error(`Tunnel profile "${name}" already exists. Use --force to replace it.`);
+  }
+  const token = await resolveSecret(options, 'Tunnel token: ');
+  const tokenFile = path.join(paths.secretsRoot, `${name}.token`);
+  await writeSecret(tokenFile, token);
+  const now = new Date().toISOString();
+  config.tunnels[name] = {
+    managementMode: 'token-only',
+    account: null,
+    tunnelId: null,
+    remoteName: null,
+    tokenFile,
+    createdAt: config.tunnels[name]?.createdAt ?? now,
+    updatedAt: now,
+  };
+  await saveConfig(config, paths);
+  console.log(`Added tunnel profile: ${name}`);
+  console.log(`Mode: token-only`);
+  console.log(`Token stored locally with mode 600: ${tokenFile}`);
+}
+
+async function listLocalTunnels(paths = appPaths()) {
+  const config = await loadConfig({ paths });
+  const names = Object.keys(config.tunnels).sort();
+  if (!names.length) {
+    console.log('No tunnel profiles configured.');
+    return;
+  }
+  const width = Math.max(4, ...names.map((name) => name.length));
+  console.log(`${'NAME'.padEnd(width)}  MODE         ACCOUNT`);
+  for (const name of names) {
+    const tunnel = config.tunnels[name];
+    console.log(`${name.padEnd(width)}  ${(tunnel.managementMode ?? 'token-only').padEnd(12)} ${tunnel.account ?? '-'}`);
+  }
+}
+
+async function confirmAction(message, options) {
+  if (options.yes) return true;
+  const answer = await promptLine(`${message} Type "yes" to continue: `);
+  return answer.toLowerCase() === 'yes';
+}
+
+function requireValue(value, usage) {
+  if (!value) throw new Error(`Missing required argument. Usage: ${usage}`);
+  return value;
+}
+
+function printObject(value) {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+async function runAccount(positionals, options, paths) {
+  const action = positionals[0];
+  const alias = positionals[1];
+  if (action === 'add') {
+    requireValue(alias, 'cfm account add <name> [--account-id <id>] [--token-file <path>] [--zone-id <id>]');
+    const accountId = options['account-id'] || await promptLine('Cloudflare Account ID: ');
+    const apiToken = await resolveSecret(options, 'Cloudflare API Token: ');
+    const account = await addAccount(alias, {
+      accountId,
+      apiToken,
+      zoneId: options['zone-id'] || null,
+      force: Boolean(options.force),
+      paths,
+    });
+    console.log(`Added Cloudflare account: ${alias}`);
+    console.log(`Account ID: ${account.accountId}`);
+    if (account.defaultZoneId) console.log(`Default Zone ID: ${account.defaultZoneId}`);
+    return;
+  }
+  if (action === 'list') {
+    const accounts = await listAccounts(paths);
+    if (!accounts.length) return console.log('No Cloudflare accounts configured.');
+    for (const account of accounts) console.log(`${account.name}\t${account.accountId}\tzone=${account.defaultZoneId ?? '-'}`);
+    return;
+  }
+  if (action === 'show') return printObject(await showAccount(requireValue(alias, 'cfm account show <name>'), paths));
+  if (action === 'doctor') {
+    await doctorAccount(requireValue(alias, 'cfm account doctor <name>'), { paths });
+    console.log(`${alias}: API credential OK`);
+    return;
+  }
+  if (action === 'remove') {
+    requireValue(alias, 'cfm account remove <name> [--yes]');
+    if (!await confirmAction(`Remove local Cloudflare account credential "${alias}"?`, options)) return console.log('Cancelled.');
+    await removeAccount(alias, { paths });
+    console.log(`Removed Cloudflare account: ${alias}`);
+    return;
+  }
+  throw new Error('Usage: cfm account <add|list|show|doctor|remove> ...');
+}
+
+async function runTunnel(positionals, options, paths) {
+  const action = positionals[0];
+  const account = positionals[1];
+  const name = positionals[2];
+  if (action === 'list') {
+    requireValue(account, 'cfm tunnel list <account>');
+    const tunnels = await listRemoteTunnels(account, { paths });
+    if (!tunnels.length) return console.log('No remotely-managed Tunnels found.');
+    for (const tunnel of tunnels) console.log(`${tunnel.name}\t${tunnel.id}\t${tunnel.status ?? ''}`.trim());
+    return;
+  }
+  if (action === 'create') {
+    requireValue(account, 'cfm tunnel create <account> <name>');
+    requireValue(name, 'cfm tunnel create <account> <name>');
+    const created = await createManagedTunnel(account, name, { paths });
+    console.log(`Created Tunnel: ${created.name}`);
+    console.log(`Tunnel ID: ${created.tunnelId}`);
+    console.log(`Token stored securely: ${created.tokenFile}`);
+    return;
+  }
+  if (action === 'adopt') {
+    requireValue(account, 'cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]');
+    requireValue(name, 'cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]');
+    const adopted = await adoptTunnel(account, name, { tunnelId: options['tunnel-id'] || null, paths });
+    console.log(`Adopted existing profile: ${name}`);
+    console.log(`Tunnel ID: ${adopted.tunnelId}`);
+    console.log('Existing Tunnel Token file was preserved.');
+    return;
+  }
+  if (action === 'show') {
+    requireValue(account, 'cfm tunnel show <account> <name>');
+    requireValue(name, 'cfm tunnel show <account> <name>');
+    return printObject(await showManagedTunnel(account, name, { paths }));
+  }
+  if (action === 'token') {
+    requireValue(account, 'cfm tunnel token <account> <name>');
+    requireValue(name, 'cfm tunnel token <account> <name>');
+    const tokenFile = await refreshTunnelToken(account, name, { paths });
+    console.log(`Tunnel Token refreshed and stored securely: ${tokenFile}`);
+    console.log('Raw token is intentionally not printed.');
+    return;
+  }
+  if (action === 'delete') {
+    requireValue(account, 'cfm tunnel delete <account> <name> [--yes]');
+    requireValue(name, 'cfm tunnel delete <account> <name> [--yes]');
+    if (!await confirmAction(`Delete remote Cloudflare Tunnel "${name}" and its local managed profile?`, options)) return console.log('Cancelled.');
+    await stopTunnel(name, { quiet: true, paths }).catch(() => {});
+    await deleteManagedTunnel(account, name, { paths });
+    console.log(`Deleted remote Tunnel and local managed profile: ${name}`);
+    return;
+  }
+  throw new Error('Usage: cfm tunnel <list|create|adopt|show|token|delete> ...');
+}
+
+async function runRoute(positionals, options, paths) {
+  const action = positionals[0];
+  const account = positionals[1];
+  const tunnel = positionals[2];
+  requireValue(account, 'cfm route <list|add|remove> <account> <tunnel> ...');
+  requireValue(tunnel, 'cfm route <list|add|remove> <account> <tunnel> ...');
+  if (action === 'list') {
+    const routes = await listRoutes(account, tunnel, { paths });
+    if (!routes.length) return console.log('No published hostname routes configured.');
+    for (const route of routes) console.log(`${route.hostname}\t${route.service}`);
+    return;
+  }
+  if (action === 'add') {
+    const hostname = requireValue(options.hostname, 'cfm route add <account> <tunnel> --hostname <hostname> --url <origin> [--dns] [--zone-id <id>]');
+    const origin = requireValue(options.url, 'cfm route add <account> <tunnel> --hostname <hostname> --url <origin> [--dns] [--zone-id <id>]');
+    const result = await addRoute(account, tunnel, {
+      hostname,
+      origin,
+      zoneId: options['zone-id'] || null,
+      manageDns: Boolean(options.dns),
+      paths,
+    });
+    console.log(`Configured ${result.hostname} -> ${result.origin}`);
+    console.log(`DNS: ${result.dnsManaged ? 'managed' : 'unchanged'}`);
+    return;
+  }
+  if (action === 'remove') {
+    const hostname = requireValue(options.hostname, 'cfm route remove <account> <tunnel> --hostname <hostname> [--dns] [--zone-id <id>]');
+    await removeRoute(account, tunnel, {
+      hostname,
+      zoneId: options['zone-id'] || null,
+      manageDns: Boolean(options.dns),
+      paths,
+    });
+    console.log(`Removed route: ${hostname}`);
+    return;
+  }
+  throw new Error('Usage: cfm route <list|add|remove> ...');
+}
+
+async function runExpose(positionals, options, paths) {
+  const account = requireValue(positionals[0], 'cfm expose <account> --name <tunnel> --hostname <hostname> (--port <port>|--url <origin>) [--zone-id <id>] [--no-dns] [--no-start]');
+  const result = await expose(account, {
+    name: requireValue(options.name, 'cfm expose <account> --name <tunnel> ...'),
+    hostname: requireValue(options.hostname, 'cfm expose <account> --hostname <hostname> ...'),
+    origin: options.url || null,
+    port: options.port || null,
+    zoneId: options['zone-id'] || null,
+    manageDns: !options['no-dns'],
+    start: !options['no-start'],
+    startTunnelFn: startTunnel,
+    paths,
+  });
+  console.log(`${result.created ? 'Created' : 'Reused'} Tunnel: ${result.name}`);
+  console.log(`Route: ${result.hostname} -> ${result.origin}`);
+  console.log(`Connector: ${result.started ? 'started' : 'not started'}`);
+  console.log(`Public URL: ${result.url}`);
 }
 
 function printHelp() {
   console.log(`cloudflare-management (cfm)
 
-Manage multiple remotely-managed Cloudflare Tunnel connectors from one development machine.
+Manage Cloudflare Tunnel connectors and optionally provision Tunnels/routes through the Cloudflare API.
 
-Usage:
+Token-only / v0.1-compatible commands:
   cfm init
   cfm add <name> [--token-file <path>] [--force]
   cfm remove <name>
@@ -489,89 +289,71 @@ Usage:
   cfm logs <name> [--follow]
   cfm doctor [name]
   cfm config
-  cfm --version
 
-Examples:
-  cfm add claire
-  cfm add client-b --token-file ~/Downloads/client-b.token
-  cfm start claire
-  cfm status
-  cfm logs claire --follow
+Account API mode (v0.2):
+  cfm account add <name> [--account-id <id>] [--token-file <path>] [--zone-id <id>] [--force]
+  cfm account list
+  cfm account show <name>
+  cfm account doctor <name>
+  cfm account remove <name> [--yes]
 
-Notes:
-  - Create the remotely-managed Tunnel and Published Application routes in each client's Cloudflare account first.
-  - Tunnel tokens are stored only on this machine under ~/.config/cloudflare-management/secrets/ with mode 600.
-  - Never commit tunnel tokens to Git.
+  cfm tunnel list <account>
+  cfm tunnel create <account> <name>
+  cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]
+  cfm tunnel show <account> <name>
+  cfm tunnel token <account> <name>
+  cfm tunnel delete <account> <name> [--yes]
+
+  cfm route list <account> <tunnel>
+  cfm route add <account> <tunnel> --hostname <host> --url <origin> [--dns] [--zone-id <id>]
+  cfm route remove <account> <tunnel> --hostname <host> [--dns] [--zone-id <id>]
+
+  cfm expose <account> --name <tunnel> --hostname <host> (--port <port>|--url <origin>) [--zone-id <id>] [--no-dns] [--no-start]
+
+Upgrade safety:
+  Existing profiles created with 'cfm add company-a' migrate as token-only and keep working unchanged.
+  Use 'cfm tunnel adopt' only when you explicitly want to attach an existing profile to API management.
+
+Security:
+  API Tokens and Tunnel Tokens are stored as mode-600 files and are never printed by normal commands.
 `);
 }
 
-export async function run(args) {
-  if (args.includes('--version') || args.includes('-v')) {
-    console.log(await packageVersion());
-    return;
-  }
-
-  if (args.includes('--help') || args.includes('-h')) {
-    printHelp();
-    return;
-  }
-
-  const { command, positionals, options } = parseArgs(args);
-  const name = positionals[0];
-
-  switch (command) {
-    case 'help':
-      printHelp();
-      break;
-    case 'init': {
-      const paths = await ensureDirectories();
-      const config = await loadConfig();
-      await saveConfig(config);
-      console.log(`Initialized: ${paths.configFile}`);
-      break;
+export async function run(args, { paths = appPaths() } = {}) {
+  try {
+    if (args.includes('--version') || args.includes('-v')) return console.log(await packageVersion());
+    if (args.includes('--help') || args.includes('-h')) return printHelp();
+    const { command, positionals, options } = parseArgs(args);
+    if (command === 'help') return printHelp();
+    if (command === 'init') {
+      await ensureDirectories(paths);
+      await loadConfig({ paths });
+      console.log(`Initialized: ${paths.configRoot}`);
+      return;
     }
-    case 'add':
-      if (!name) throw new Error('Usage: cfm add <name> [--token-file <path>]');
-      await addTunnel(name, options);
-      break;
-    case 'remove':
-      if (!name) throw new Error('Usage: cfm remove <name>');
-      await removeTunnel(name);
-      break;
-    case 'list':
-    case 'status':
-      await printStatus(name ?? null);
-      break;
-    case 'start':
-      if (!name) throw new Error('Usage: cfm start <name>');
-      await startTunnel(name);
-      break;
-    case 'start-all':
-      await startAll();
-      break;
-    case 'stop':
-      if (!name) throw new Error('Usage: cfm stop <name>');
-      await stopTunnel(name);
-      break;
-    case 'stop-all':
-      await stopAll();
-      break;
-    case 'restart':
-      if (!name) throw new Error('Usage: cfm restart <name>');
-      await stopTunnel(name, { quiet: true });
-      await startTunnel(name);
-      break;
-    case 'logs':
-      if (!name) throw new Error('Usage: cfm logs <name> [--follow]');
-      await showLogs(name, Boolean(options.follow));
-      break;
-    case 'doctor':
-      await doctor(name ?? null);
-      break;
-    case 'config':
-      console.log(appPaths().configFile);
-      break;
-    default:
-      throw new Error(`Unknown command: ${command}. Run "cfm --help".`);
+    if (command === 'add') return addLegacyTunnel(requireValue(positionals[0], 'cfm add <name>'), options, paths);
+    if (command === 'remove') return removeLocalTunnel(requireValue(positionals[0], 'cfm remove <name>'), paths);
+    if (command === 'list') return listLocalTunnels(paths);
+    if (command === 'start') return startTunnel(requireValue(positionals[0], 'cfm start <name>'), { paths });
+    if (command === 'start-all') return startAll(paths);
+    if (command === 'stop') return stopTunnel(requireValue(positionals[0], 'cfm stop <name>'), { paths });
+    if (command === 'stop-all') return stopAll(paths);
+    if (command === 'restart') {
+      const name = requireValue(positionals[0], 'cfm restart <name>');
+      await stopTunnel(name, { quiet: true, paths });
+      return startTunnel(name, { paths });
+    }
+    if (command === 'status') return printStatus(positionals[0] || null, paths);
+    if (command === 'logs') return showLogs(requireValue(positionals[0], 'cfm logs <name>'), Boolean(options.follow), paths);
+    if (command === 'doctor') return doctor(positionals[0] || null, paths);
+    if (command === 'config') return console.log(paths.configFile);
+    if (command === 'account') return runAccount(positionals, options, paths);
+    if (command === 'tunnel') return runTunnel(positionals, options, paths);
+    if (command === 'route') return runRoute(positionals, options, paths);
+    if (command === 'expose') return runExpose(positionals, options, paths);
+    throw new Error(`Unknown command: ${command}`);
+  } catch (error) {
+    if (error instanceof CloudflareApiError) throw new Error(formatCloudflareError(error));
+    throw error;
   }
 }
