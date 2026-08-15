@@ -12,27 +12,38 @@ cfm --version
 
 ## 最新の `main` へ更新
 
-GitHub から直接インストールしている場合は、再インストールします：
-
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 cfm --version
 ```
 
-グローバル CLI package は更新されますが、ローカルの `cfm` data は削除されません。
-
 ## 特定 Release をインストール / 固定
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
-複数の開発マシンで再現可能な setup が必要な場合は release tag の利用を推奨します。
+## v0.2.2 権限診断
+
+Cloudflare は HTTP 200 でも `success: false` と error code `10000`（`Authentication error`）を返すことがあります。v0.2.2 はこれを authentication/authorization failure として認識し、Zone discovery または DNS record access のどこで失敗したかを明示します。
+
+基本 doctor は Tunnel API access のみ確認します：
+
+```bash
+cfm account doctor company-a
+```
+
+Zone discovery と DNS read も確認する場合：
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+Doctor は DNS を変更しないため、成功しても DNS Edit permission までは保証しません。
 
 ## v0.2.1 の DNS 動作
-
-v0.2.1 では `--dns` 使用時に Zone ID が未設定でも、即座に validation error にならないよう改善されています。
 
 DNS 管理時の Zone ID 解決順序：
 
@@ -42,11 +53,9 @@ DNS 管理時の Zone ID 解決順序：
 3. hostname から自動検出
 ```
 
-自動検出は Cloudflare `GET /zones` を利用するため、対象 Zone の `Zone:Zone:Read` が必要です。DNS record の作成・更新には引き続き DNS write 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示してください。
+自動検出には対象 Zone の Zone Read、DNS record の作成・更新には DNS Edit が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示できますが、DNS Edit は引き続き必要です。
 
 ## ローカルデータの保存場所
-
-デフォルト：
 
 ```text
 ~/.config/cloudflare-management/
@@ -94,31 +103,19 @@ Adoption は新しい Tunnel を作成せず、既存 Tunnel Token もデフォ�
 
 ## 更新前の推奨チェック
 
-重要な開発マシンでは：
-
 ```bash
 cfm --version
 cfm status
 cfm doctor
 ```
 
-必要に応じて次の metadata をバックアップできます：
-
-```text
-~/.config/cloudflare-management/config.json
-```
-
-Secret file を public Git repository、Issue、PR、公開チャットへ貼らないでください。
-
 ## Rollback
 
-特定 version を再インストール：
-
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
-schema v2 が一度書き込まれた後は、schema v1 だけを理解する古い CLI がその config を正しく扱えない可能性があります。通常は forward fix を優先し、migration 前 backup の復元は影響を理解している場合だけ行ってください。
+schema v2 が一度書き込まれた後は、schema v1 だけを理解する古い CLI がその config を正しく扱えない可能性があります。通常は forward fix を優先してください。
 
 ## 更新後のトラブルシューティング
 
@@ -126,6 +123,7 @@ schema v2 が一度書き込まれた後は、schema v1 だけを理解する古
 cfm --version
 cfm doctor
 cfm status
+cfm account doctor company-a --hostname api-dev.example.com
 ```
 
 その後 [Troubleshooting](./TROUBLESHOOTING.md) を参照してください。
