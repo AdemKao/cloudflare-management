@@ -24,11 +24,25 @@ cfm --version
 ## 特定 Release をインストール / 固定
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
 複数の開発マシンで再現可能な setup が必要な場合は release tag の利用を推奨します。
+
+## v0.2.1 の DNS 動作
+
+v0.2.1 では `--dns` 使用時に Zone ID が未設定でも、即座に validation error にならないよう改善されています。
+
+DNS 管理時の Zone ID 解決順序：
+
+```text
+1. --zone-id <ZONE_ID>
+2. Account の defaultZoneId
+3. hostname から自動検出
+```
+
+自動検出は Cloudflare `GET /zones` を利用するため、対象 Zone の `Zone:Zone:Read` が必要です。DNS record の作成・更新には引き続き DNS write 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示してください。
 
 ## ローカルデータの保存場所
 
@@ -101,7 +115,7 @@ Secret file を public Git repository、Issue、PR、公開チャットへ貼ら
 特定 version を再インストール：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 schema v2 が一度書き込まれた後は、schema v1 だけを理解する古い CLI がその config を正しく扱えない可能性があります。通常は forward fix を優先し、migration 前 backup の復元は影響を理解している場合だけ行ってください。
