@@ -68,9 +68,11 @@ cfm account add company-a \
   --zone-id <OPTIONAL_DEFAULT_ZONE_ID>
 ```
 
-The API credential is verified before account metadata is saved. Account aliases and local Tunnel/profile aliases are separate namespaces, so an existing `cfm add company-a` profile can coexist with `cfm account add company-a`.
+The API credential is verified against the Tunnel API before account metadata is saved. Account aliases and local Tunnel/profile aliases are separate namespaces, so an existing `cfm add company-a` profile can coexist with `cfm account add company-a`.
 
-### Account inspection
+### Account inspection and permission diagnostics
+
+Basic account inspection:
 
 ```bash
 cfm account list
@@ -78,6 +80,25 @@ cfm account show company-a
 cfm account doctor company-a
 cfm account remove company-a --yes
 ```
+
+`cfm account doctor company-a` validates the Account credential against the Tunnel API only. It intentionally prints that Zone/DNS permissions were not checked.
+
+To validate Zone discovery and DNS-read access for a hostname without changing DNS records:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+If you already know the Zone ID and want to bypass auto-discovery:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com \
+  --zone-id <ZONE_ID>
+```
+
+A successful DNS-read diagnostic does not mutate DNS records and therefore cannot prove DNS write permission. `cfm route ... --dns` still requires the target Zone to allow DNS edits.
 
 Account removal is blocked while managed Tunnel profiles still reference the account.
 
@@ -180,7 +201,7 @@ api-dev.example.com
 example.com
 ```
 
-Automatic discovery uses Cloudflare `GET /zones` and therefore requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission.
+Automatic discovery uses Cloudflare `GET /zones` and requires Zone read access for the target Zone. DNS record creation/update separately requires DNS edit access for that Zone.
 
 If you intentionally do not grant Zone Read, provide the Zone explicitly:
 
@@ -191,6 +212,10 @@ cfm route add company-a project-dev \
   --dns \
   --zone-id <ZONE_ID>
 ```
+
+This skips Zone discovery, but it does **not** skip the DNS edit permission requirement.
+
+Cloudflare can return error code `10000` (`Authentication error`) even when the HTTP response status is 200. `cfm` v0.2.2 recognizes that as an authentication/authorization failure and prints the relevant Zone/DNS permission guidance instead of only the raw Cloudflare message.
 
 ### Remove a route
 
