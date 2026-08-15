@@ -2,6 +2,44 @@
 
 All notable changes to `cloudflare-management` are documented here.
 
+## v0.2.1 — 2026-08-15
+
+### Fixed
+
+- `cfm route add ... --dns` no longer fails immediately when neither `--zone-id` nor an account default Zone ID is configured;
+- `cfm` now attempts to discover the matching Cloudflare Zone from the hostname, starting with the full hostname and walking toward parent domains;
+- automatic discovery filters returned Zones to the configured Cloudflare Account;
+- DNS setup now returns actionable guidance when automatic discovery is denied because the API Token lacks `Zone:Zone:Read`;
+- callers can still bypass discovery with an explicit `--zone-id` or an account `defaultZoneId`.
+
+### Permissions
+
+Automatic Zone discovery uses Cloudflare's `GET /zones` API and therefore requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission. Users who intentionally do not grant Zone Read can continue using:
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
+```
+
+### Upgrade
+
+Latest from `main` after release:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
+```
+
+Pinned release:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
+cfm --version
+```
+
 ## v0.2.0 — 2026-08-15
 
 ### Added
