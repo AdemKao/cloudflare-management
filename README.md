@@ -62,12 +62,12 @@ When you want `cfm` to create/manage Cloudflare resources:
 
 ```bash
 cfm account add company-a
-cfm tunnel create company-a solana-dev
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns
-cfm start solana-dev
+cfm start project-dev
 ```
 
 Account API Tokens and Tunnel Tokens are stored separately.
@@ -102,16 +102,16 @@ brew install cloudflared
 
 ## Install
 
-From `main`:
+Install the latest version from `main`:
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-To test the v0.2 implementation branch before merge:
+Install a specific release tag:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#feat/v0.2-api-management
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
 ```
 
 Verify:
@@ -120,6 +120,28 @@ Verify:
 cfm --version
 cfm --help
 ```
+
+## Update
+
+If `cfm` was installed directly from GitHub, update by reinstalling from `main`:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
+```
+
+To upgrade to a specific release instead:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
+cfm --version
+```
+
+Your profiles, Account API Tokens, Tunnel Tokens, runtime state, and logs live outside the npm package directory, so reinstalling/updating the CLI does not remove them.
+
+When upgrading from v0.1 to v0.2, the first config load automatically backs up the v1 metadata and migrates existing profiles to `token-only` records while preserving the existing Tunnel Token paths.
+
+Read the multilingual [Upgrade guide](./docs/UPGRADING.en.md) before upgrading production/dev machines with important client profiles.
 
 ## Quick start: existing Tunnel
 
@@ -154,22 +176,22 @@ cfm account add company-a \
 Then create a Tunnel:
 
 ```bash
-cfm tunnel create company-a solana-dev
+cfm tunnel create company-a project-dev
 ```
 
 Configure a published hostname:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
 ```
 
 Add `--dns` when the Account credential also has the required Zone DNS permission:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns
 ```
@@ -177,7 +199,7 @@ cfm route add company-a solana-dev \
 Finally:
 
 ```bash
-cfm start solana-dev
+cfm start project-dev
 ```
 
 ## One-command expose workflow
@@ -186,8 +208,8 @@ When the account has a default Zone ID configured:
 
 ```bash
 cfm expose company-a \
-  --name solana-dev \
-  --hostname webhook-dev.example.com \
+  --name project-dev \
+  --hostname api-dev.example.com \
   --port 3001
 ```
 
@@ -276,7 +298,7 @@ Secrets are separated by purpose:
     ├── accounts/
     │   └── company-a.api-token
     └── tunnels/
-        └── solana-dev.token
+        └── project-dev.token
 ```
 
 Runtime data:
@@ -304,6 +326,7 @@ Read [Security](./docs/SECURITY.md) for the full model.
 - [English guide](./docs/README.en.md)
 - [繁體中文](./docs/README.zh-TW.md)
 - [日本語](./docs/README.ja.md)
+- [Upgrade guide](./docs/UPGRADING.en.md)
 - [Tunnel Token guide](./docs/TUNNEL_TOKEN.en.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [v0.2 API design](./docs/V0.2_API_MANAGEMENT.md)
