@@ -24,15 +24,34 @@ cfm --version
 ## 安裝或鎖定指定 Release
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
 如果希望不同開發機使用完全相同版本，建議使用 release tag。
 
-## v0.2.1 DNS 行為
+## v0.2.2 權限診斷
 
-v0.2.1 改善了 `--dns`：沒有 Zone ID 時不會直接因為 validation 失敗。
+v0.2.2 改善 Cloudflare Zone / DNS authorization handling。Cloudflare 有可能回傳 HTTP 200，但 response 是 `success: false` 並帶 error code `10000`（`Authentication error`）；`cfm` 現在會正確辨識成 authentication/authorization failure，並指出失敗是在 Zone discovery 還是 DNS record 操作。
+
+基本檢查：
+
+```bash
+cfm account doctor company-a
+```
+
+現在只表示 Tunnel API access 正常，不會再暗示 Zone / DNS 權限也已驗證。
+
+如果要額外確認 hostname 的 Zone discovery 與 DNS read：
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+Doctor 不會修改 DNS，所以成功不代表 DNS write 一定可用；`cfm route ... --dns` 仍需要目標 Zone 的 DNS Edit 權限。
+
+## v0.2.1 DNS 行為
 
 需要管理 DNS 時，Zone ID 會依序使用：
 
@@ -42,7 +61,7 @@ v0.2.1 改善了 `--dns`：沒有 Zone ID 時不會直接因為 validation 失�
 3. 由 hostname 自動尋找對應 Zone
 ```
 
-自動尋找會呼叫 Cloudflare `GET /zones`，因此 API Token 需要目標 Zone 的 `Zone:Zone:Read`。DNS record 的建立/更新仍需要對應 DNS write 權限。如果你刻意不提供 Zone Read，可以繼續明確傳入 `--zone-id <ZONE_ID>`。
+自動尋找需要目標 Zone 的 Zone Read。DNS record 建立/更新則是獨立的 DNS Edit 權限。如果不想提供 Zone Read，可以明確傳入 `--zone-id <ZONE_ID>`，但 DNS Edit 仍然需要。
 
 ## 本機資料放在哪裡
 
@@ -120,10 +139,10 @@ cfm doctor
 
 ## Rollback
 
-要重新安裝指定版本：
+要重新安裝目前 patch release：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 但要注意：一旦 schema v2 已經寫入，舊版只認得 schema v1 的 CLI 不一定能正確讀取。通常應優先升級到修正版；只有在你理解影響時，才考慮還原 migration 前的 metadata backup。
@@ -134,6 +153,12 @@ npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 cfm doctor
 cfm status
+```
+
+API / DNS mode 可以再跑：
+
+```bash
+cfm account doctor company-a --hostname api-dev.example.com
 ```
 
 再參考 [Troubleshooting](./TROUBLESHOOTING.md)。
