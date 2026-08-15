@@ -82,6 +82,7 @@ Account API Tokens and Tunnel Tokens are stored separately.
 - **Published hostname management** — configure hostname → origin rules.
 - **Optional DNS automation** — CNAME creation/removal only when requested and authorized.
 - **Automatic Zone discovery** — when `--dns` is used without a Zone ID, `cfm` can resolve the matching Cloudflare Zone from the hostname.
+- **Permission-aware diagnostics** — v0.2.2 distinguishes Tunnel access from Zone/DNS access and recognizes Cloudflare error code `10000`.
 - **One-command expose flow** — provision/reuse Tunnel + route + DNS + connector startup.
 - **Protected secrets** — mode-600 token files outside the repository.
 - **No raw Tunnel Token in process args** — `cloudflared tunnel run --token-file ...`.
@@ -112,7 +113,7 @@ npm install -g github:AdemKao/cloudflare-management
 Install a specific release tag:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 Verify:
@@ -134,7 +135,7 @@ cfm --version
 To upgrade to a specific release instead:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
@@ -205,7 +206,34 @@ When `--dns` is enabled, Zone selection follows this order:
 3. automatic discovery from the hostname
 ```
 
-Automatic discovery queries Cloudflare Zones from the full hostname toward parent domains (for example `api-dev.example.com` → `example.com`). It requires `Zone:Zone:Read` for the target Zone. DNS record creation/update still requires the appropriate DNS write permission. If you intentionally do not grant Zone Read, provide `--zone-id <ZONE_ID>` explicitly.
+Automatic discovery queries Cloudflare Zones from the full hostname toward parent domains (for example `api-dev.example.com` → `example.com`). It requires Zone read access for the target Zone. DNS record creation/update separately requires DNS edit access. If you intentionally do not grant Zone Read, provide `--zone-id <ZONE_ID>` explicitly.
+
+Cloudflare can return API error code `10000` (`Authentication error`) even when the HTTP status is 200. `cfm` v0.2.2 recognizes that response and explains whether the failure happened during Zone discovery or DNS record management.
+
+### Check permissions before changing DNS
+
+Basic doctor validates Tunnel API access only:
+
+```bash
+cfm account doctor company-a
+```
+
+To additionally validate Zone discovery and DNS-read access for a hostname without mutating DNS:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+If you already know the Zone ID:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com \
+  --zone-id <ZONE_ID>
+```
+
+A successful read-only doctor does not prove DNS write permission; `cfm route ... --dns` still requires DNS edit access for the target Zone.
 
 Finally:
 
@@ -330,7 +358,8 @@ Key rules:
 - Normal commands do not print raw tokens.
 - Remote Tunnel deletion requires confirmation or `--yes`.
 - Use a specific Account and specific Zone scope instead of broad cross-client credentials.
-- Grant `Zone:Zone:Read` only when you want automatic Zone discovery; otherwise use an explicit/default Zone ID.
+- Grant Zone Read only when you want automatic Zone discovery; otherwise use an explicit/default Zone ID.
+- DNS automation still requires DNS Edit on the target Zone even when Tunnel API checks succeed.
 
 Read [Security](./docs/SECURITY.md) for the full model.
 
@@ -360,7 +389,7 @@ npm link
 npm run check
 ```
 
-The test suite includes migration, backward-compatibility, Cloudflare API error paths, secret-leakage checks, alias coexistence, duplicate prevention, adoption, and automatic Zone discovery using mocked API responses.
+The test suite includes migration, backward-compatibility, Cloudflare API error paths, secret-leakage checks, alias coexistence, duplicate prevention, adoption, automatic Zone discovery, code-10000 authorization handling, and permission diagnostics using mocked API responses.
 
 ## Scope
 

@@ -18,7 +18,7 @@ The repository root [README](../README.md) is the primary English project landin
 - [Tunnel Token — English](./TUNNEL_TOKEN.en.md)
 - [Tunnel Token — 繁體中文](./TUNNEL_TOKEN.zh-TW.md)
 - [Tunnel Token — 日本語](./TUNNEL_TOKEN.ja.md)
-- [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, DNS Zone auto-discovery, and `expose` commands.
+- [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, DNS Zone auto-discovery, permission diagnostics, and `expose` commands.
 - [Changelog](../CHANGELOG.md) — version-by-version user-facing changes and upgrade notes.
 
 ## Architecture and operations
@@ -27,7 +27,7 @@ The repository root [README](../README.md) is the primary English project landin
 - [v0.2 API Management](./V0.2_API_MANAGEMENT.md) — design decisions and implementation phases tracked by Issue #3.
 - [Security](./SECURITY.md) — Account API Token vs Tunnel Token handling, least privilege, Zone discovery permission, rotation, deletion, and offboarding.
 - [Configuration](./CONFIGURATION.md) — config, secrets, state, logs, XDG paths, default Zone ID, and hostname-based Zone discovery.
-- [Troubleshooting](./TROUBLESHOOTING.md) — common tunnel, localhost, token, API, DNS Zone discovery, and hostname failures.
+- [Troubleshooting](./TROUBLESHOOTING.md) — common tunnel, localhost, token, API, DNS Zone discovery, Cloudflare error code `10000`, and hostname failures.
 - [Roadmap](./ROADMAP.md) — completed phases and future work.
 - [Contributing](../CONTRIBUTING.md) — development workflow and contribution guidelines.
 
@@ -42,7 +42,7 @@ npm install -g github:AdemKao/cloudflare-management
 Specific release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 ## Update
@@ -60,8 +60,14 @@ Run diagnostics after an install/update:
 cfm doctor
 ```
 
-For API mode:
+For Tunnel API credential validation:
 
 ```bash
 cfm account doctor <account>
+```
+
+For Zone discovery + DNS-read validation:
+
+```bash
+cfm account doctor <account> --hostname <hostname>
 ```

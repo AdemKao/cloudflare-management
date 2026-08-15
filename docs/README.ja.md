@@ -81,6 +81,8 @@ Account API Token と Tunnel Token は別々に保存されます。
 - Tunnel provisioning / remote configuration
 - 任意の DNS automation
 - `--dns` で Zone ID がない場合の hostname からの Cloudflare Zone 自動検出
+- Tunnel / Zone / DNS 権限を分けて診断する v0.2.2 permission diagnostics
+- HTTP 200 でも返る Cloudflare error code `10000` の認識
 - 1 コマンドの `cfm expose`
 - `0600` の secret file
 - raw Tunnel Token を process args に置かない設計
@@ -111,7 +113,7 @@ npm install -g github:AdemKao/cloudflare-management
 特定の release tag をインストール：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 確認：
@@ -133,7 +135,7 @@ cfm --version
 特定 release に固定する場合：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
@@ -182,7 +184,34 @@ cfm route add company-a project-dev \
 3. hostname から自動検出
 ```
 
-自動検出では `api-dev.example.com` → `example.com` のように full hostname から parent domain へ順番に確認し、Cloudflare `GET /zones` を利用します。そのため対象 Zone の `Zone:Zone:Read` が必要です。DNS record の作成・更新には引き続き DNS write 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示してください。
+自動検出では `api-dev.example.com` → `example.com` のように full hostname から parent domain へ順番に確認し、Cloudflare `GET /zones` を利用します。そのため対象 Zone の Zone Read 権限が必要です。DNS record の作成・更新には別途 DNS Edit 権限が必要です。Zone Read を付与しない場合は `--zone-id <ZONE_ID>` を明示できますが、DNS Edit は引き続き必要です。
+
+Cloudflare は HTTP 200 でも `success: false` と error code `10000`（`Authentication error`）を返すことがあります。v0.2.2 はこれを authentication/authorization failure として認識し、Zone discovery と DNS record management のどこで失敗したかを表示します。
+
+### 権限診断
+
+基本 doctor は Tunnel API access だけを検証します：
+
+```bash
+cfm account doctor company-a
+```
+
+Zone discovery と DNS read も確認する場合：
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+Zone ID が既知の場合：
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com \
+  --zone-id <ZONE_ID>
+```
+
+Doctor は DNS を変更しないため、成功しても DNS write permission までは保証しません。`cfm route ... --dns` には対象 Zone の DNS Edit が必要です。
 
 ## 1 コマンドで公開：`cfm expose`
 
@@ -254,7 +283,8 @@ Adoption は別の Tunnel を作成せず、既存 Tunnel Token もデフォル�
 - 通常コマンドは raw token を表示しない。
 - Remote Tunnel delete は確認または `--yes` が必要。
 - Account / Zone を限定した最小権限 Token を推奨。
-- Zone 自動検出が必要な場合のみ `Zone:Zone:Read` を追加し、不要なら explicit/default Zone ID を利用できます。
+- Zone 自動検出が必要な場合のみ Zone Read を追加し、不要なら explicit/default Zone ID を利用できます。
+- Tunnel API doctor の成功は DNS Edit 権限を意味しません。
 
 詳細は [Security](./SECURITY.md) を参照してください。
 

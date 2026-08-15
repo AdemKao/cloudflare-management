@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CloudflareApiError, CloudflareClient } from '../src/cloudflare/client.js';
+import { CloudflareApiError, CloudflareClient, formatCloudflareError } from '../src/cloudflare/client.js';
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -38,6 +38,26 @@ test('Cloudflare API failures preserve status but do not leak token', async () =
       },
     );
   }
+});
+
+test('Cloudflare success=false preserves code 10000 even when HTTP status is 200', async () => {
+  const client = new CloudflareClient({
+    accountId: '0123456789abcdef0123456789abcdef',
+    apiToken: 'never-print-me',
+    fetchImpl: async () => jsonResponse({ success: false, errors: [{ code: 10000, message: 'Authentication error' }] }, 200),
+  });
+  await assert.rejects(
+    () => client.listZones({ name: 'example.com' }),
+    (error) => {
+      assert.ok(error instanceof CloudflareApiError);
+      assert.equal(error.status, 200);
+      assert.equal(error.code, 10000);
+      assert.match(formatCloudflareError(error), /authentication\/authorization failed/);
+      assert.match(formatCloudflareError(error), /code 10000/);
+      assert.doesNotMatch(formatCloudflareError(error), /never-print-me/);
+      return true;
+    },
+  );
 });
 
 test('createTunnel uses remotely-managed config source', async () => {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appPaths, saveConfig } from '../src/config.js';
 import { writeSecret } from '../src/secrets.js';
-import { addRoute, adoptTunnel, createManagedTunnel, expose } from '../src/resources.js';
+import { addRoute, adoptTunnel, createManagedTunnel, doctorAccount, expose } from '../src/resources.js';
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -179,11 +179,125 @@ test('route add gives actionable guidance when automatic zone discovery lacks Zo
       paths,
     }),
     (error) => {
-      assert.match(error.message, /Zone:Zone:Read/);
+      assert.match(error.message, /Zone -> Zone -> Read/);
       assert.match(error.message, /--zone-id <ZONE_ID>/);
       return true;
     },
   );
 
   assert.deepEqual(calls, [{ method: 'GET', pathname: '/client/v4/zones' }]);
+});
+
+test('route add recognizes Cloudflare code 10000 even when HTTP status is 200', async () => {
+  const { paths } = await fixture();
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url);
+    calls.push({ method: options.method ?? 'GET', pathname: parsed.pathname });
+    if (parsed.pathname === '/client/v4/zones') {
+      return jsonResponse({ success: false, errors: [{ code: 10000, message: 'Authentication error' }] }, 200);
+    }
+    throw new Error(`Unexpected request: ${parsed}`);
+  };
+
+  await assert.rejects(
+    () => addRoute('company-a', 'project-dev', {
+      hostname: 'webhook.example.com',
+      origin: 'http://localhost:3001',
+      manageDns: true,
+      fetchImpl,
+      paths,
+    }),
+    (error) => {
+      assert.match(error.message, /Zone -> Zone -> Read/);
+      assert.match(error.message, /code 10000/);
+      assert.match(error.message, /Authentication error/);
+      return true;
+    },
+  );
+
+  assert.deepEqual(calls, [{ method: 'GET', pathname: '/client/v4/zones' }]);
+});
+
+test('route add reports DNS authorization separately from Tunnel API access', async () => {
+  const { paths } = await fixture();
+  const zoneId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url);
+    const method = options.method ?? 'GET';
+    if (parsed.pathname === '/client/v4/zones') {
+      return jsonResponse({
+        success: true,
+        result: [{ id: zoneId, name: 'example.com', account: { id: '0123456789abcdef0123456789abcdef' } }],
+      });
+    }
+    if (parsed.pathname.endsWith('/configurations') && method === 'GET') {
+      return jsonResponse({ success: true, result: { config: { ingress: [{ service: 'http_status:404' }] } } });
+    }
+    if (parsed.pathname.endsWith('/configurations') && method === 'PUT') {
+      return jsonResponse({ success: true, result: {} });
+    }
+    if (parsed.pathname === `/client/v4/zones/${zoneId}/dns_records`) {
+      return jsonResponse({ success: false, errors: [{ code: 10000, message: 'Authentication error' }] }, 200);
+    }
+    throw new Error(`Unexpected request: ${method} ${parsed}`);
+  };
+
+  await assert.rejects(
+    () => addRoute('company-a', 'project-dev', {
+      hostname: 'webhook.example.com',
+      origin: 'http://localhost:3001',
+      manageDns: true,
+      fetchImpl,
+      paths,
+    }),
+    (error) => {
+      assert.match(error.message, /DNS record management authorization failed/);
+      assert.match(error.message, /Zone -> DNS -> Edit/);
+      assert.match(error.message, /Zone Resources/);
+      assert.match(error.message, /code 10000/);
+      return true;
+    },
+  );
+});
+
+test('account doctor without hostname clearly checks Tunnel API only', async () => {
+  const { paths } = await fixture();
+  let calls = 0;
+  const result = await doctorAccount('company-a', {
+    paths,
+    fetchImpl: async (url) => {
+      calls += 1;
+      assert.match(url, /cfd_tunnel/);
+      return jsonResponse({ success: true, result: [] });
+    },
+  });
+  assert.equal(result.tunnelApi, true);
+  assert.equal(result.zoneChecked, false);
+  assert.equal(result.dnsRead, null);
+  assert.equal(calls, 1);
+});
+
+test('account doctor can validate Zone discovery and DNS read for a hostname', async () => {
+  const { paths } = await fixture();
+  const zoneId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const result = await doctorAccount('company-a', {
+    hostname: 'webhook.example.com',
+    paths,
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.includes('/cfd_tunnel')) return jsonResponse({ success: true, result: [] });
+      if (parsed.pathname === '/client/v4/zones') {
+        const name = parsed.searchParams.get('name');
+        if (name === 'webhook.example.com') return jsonResponse({ success: true, result: [] });
+        return jsonResponse({ success: true, result: [{ id: zoneId, name: 'example.com', account: { id: '0123456789abcdef0123456789abcdef' } }] });
+      }
+      if (parsed.pathname === `/client/v4/zones/${zoneId}/dns_records`) return jsonResponse({ success: true, result: [] });
+      throw new Error(`Unexpected request: ${parsed}`);
+    },
+  });
+  assert.equal(result.tunnelApi, true);
+  assert.equal(result.zoneChecked, true);
+  assert.equal(result.dnsRead, true);
+  assert.equal(result.zoneName, 'example.com');
 });

@@ -24,17 +24,34 @@ This replaces the globally installed CLI package but does not remove your local 
 ## Install or pin a release
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 cfm --version
 ```
 
 Using a tag is recommended when you want reproducible developer-machine setup.
 
+## v0.2.2 permission diagnostics
+
+v0.2.2 improves Cloudflare Zone/DNS authorization handling. Cloudflare may return `success: false` with error code `10000` (`Authentication error`) while the HTTP status is still 200. `cfm` now recognizes this response and reports whether Zone discovery or DNS record access failed.
+
+Basic account doctor checks Tunnel API access only:
+
+```bash
+cfm account doctor company-a
+```
+
+To additionally validate Zone discovery and DNS-read access for a hostname:
+
+```bash
+cfm account doctor company-a \
+  --hostname api-dev.example.com
+```
+
+Doctor does not modify DNS, so a successful check does not prove DNS write permission. `cfm route ... --dns` still requires DNS Edit for the target Zone.
+
 ## v0.2.1 DNS behavior
 
-v0.2.1 improves `--dns` so a missing Zone ID does not immediately fail validation.
-
-When DNS management is requested, Zone selection is now:
+When DNS management is requested, Zone selection is:
 
 ```text
 1. --zone-id <ZONE_ID>
@@ -42,7 +59,7 @@ When DNS management is requested, Zone selection is now:
 3. automatic hostname-based Zone discovery
 ```
 
-Automatic discovery uses Cloudflare `GET /zones`, so the API Token needs `Zone:Zone:Read` for the target Zone. DNS record changes still require the appropriate DNS write permission. If you intentionally do not grant Zone Read, continue passing `--zone-id <ZONE_ID>` explicitly.
+Automatic discovery uses Cloudflare `GET /zones`, so the API Token needs Zone Read for the target Zone. DNS record changes separately require DNS Edit. If you intentionally do not grant Zone Read, continue passing `--zone-id <ZONE_ID>` explicitly.
 
 ## Where your local data lives
 
@@ -114,10 +131,10 @@ Do not copy secret files into a public repository or shared chat.
 
 ## Rollback
 
-To return to a tagged version:
+To return to the current patch release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.1
+npm install -g github:AdemKao/cloudflare-management#v0.2.2
 ```
 
 Be aware that once schema v2 has been written, an older CLI that only understands schema v1 may not be suitable for reading that config. Prefer forward fixes or restore a pre-migration config backup only when you understand the consequences.
@@ -128,6 +145,12 @@ Be aware that once schema v2 has been written, an older CLI that only understand
 cfm --version
 cfm doctor
 cfm status
+```
+
+For API/DNS mode:
+
+```bash
+cfm account doctor company-a --hostname api-dev.example.com
 ```
 
 Then see [Troubleshooting](./TROUBLESHOOTING.md).
