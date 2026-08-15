@@ -1,21 +1,20 @@
 # Configuration
 
-`cloudflare-management` keeps local connector configuration, secrets, runtime state, and logs outside the repository.
+`cloudflare-management` keeps configuration metadata, secrets, runtime state, and logs outside the repository.
 
 ## Default paths
-
-Configuration and tunnel tokens:
 
 ```text
 ~/.config/cloudflare-management/
 ├── config.json
+├── config.v1.backup.json        # only created during a v1 → v2 migration
 └── secrets/
-    └── <profile>.token
-```
+    ├── company-a.token          # existing/token-only profile path may remain here
+    ├── accounts/
+    │   └── company-a.api-token
+    └── tunnels/
+        └── solana-dev.token
 
-Runtime state and logs:
-
-```text
 ~/.local/state/cloudflare-management/
 ├── logs/
 │   └── <profile>.log
@@ -25,103 +24,181 @@ Runtime state and logs:
 
 ## XDG support
 
-When `XDG_CONFIG_HOME` is set, the configuration root becomes:
+When `XDG_CONFIG_HOME` is set:
 
 ```text
 $XDG_CONFIG_HOME/cloudflare-management/
 ```
 
-When `XDG_STATE_HOME` is set, the state root becomes:
+When `XDG_STATE_HOME` is set:
 
 ```text
 $XDG_STATE_HOME/cloudflare-management/
 ```
 
-This is useful when you prefer explicit configuration/state locations or need to integrate the CLI with an existing dotfiles setup.
+## Schema v2
 
-## `config.json`
+A simplified v0.2 configuration:
 
-The config file records local profile metadata and the corresponding token-file path.
+```json
+{
+  "version": 2,
+  "accounts": {
+    "company-a": {
+      "accountId": "ACCOUNT_ID",
+      "apiTokenFile": "/Users/you/.config/cloudflare-management/secrets/accounts/company-a.api-token",
+      "defaultZoneId": "ZONE_ID"
+    }
+  },
+  "tunnels": {
+    "company-a": {
+      "managementMode": "adopted",
+      "account": "company-a",
+      "tunnelId": "TUNNEL_UUID",
+      "remoteName": "company-a-dev",
+      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/company-a.token"
+    },
+    "solana-dev": {
+      "managementMode": "provisioned",
+      "account": "company-a",
+      "tunnelId": "TUNNEL_UUID_2",
+      "remoteName": "solana-dev",
+      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/tunnels/solana-dev.token"
+    }
+  }
+}
+```
 
-A simplified example:
+Raw API Tokens and Tunnel Tokens are never embedded in `config.json`.
+
+## Management modes
+
+```text
+token-only
+  Existing/manual Tunnel; only a local Tunnel Token is required.
+
+adopted
+  Existing/manual Tunnel explicitly attached to an Account alias + remote Tunnel ID.
+
+provisioned
+  Tunnel created by cfm through the Cloudflare API.
+```
+
+## v1 migration
+
+When a v1 config is loaded for the first time, `cfm`:
+
+1. reads the existing metadata;
+2. creates `config.v1.backup.json` before mutation;
+3. converts existing profiles to `token-only` records;
+4. preserves existing profile names and Tunnel Token paths;
+5. writes schema v2 atomically.
+
+Example v1 profile:
 
 ```json
 {
   "version": 1,
   "tunnels": {
     "company-a": {
-      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/company-a.token",
-      "createdAt": "2026-08-15T00:00:00.000Z",
-      "updatedAt": "2026-08-15T00:00:00.000Z"
+      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/company-a.token"
     }
   }
 }
 ```
 
-Do not manually copy real tokens into this file. Tokens belong in the dedicated secret files created by `cfm add`.
+becomes logically:
 
-## Token files
+```json
+{
+  "version": 2,
+  "accounts": {},
+  "tunnels": {
+    "company-a": {
+      "managementMode": "token-only",
+      "account": null,
+      "tunnelId": null,
+      "remoteName": null,
+      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/company-a.token"
+    }
+  }
+}
+```
 
-Each profile has a dedicated token file:
+The old secret file is not moved or rewritten merely because the config schema changed.
+
+## Account API Token files
+
+Account credentials are stored separately:
+
+```text
+~/.config/cloudflare-management/secrets/accounts/<account>.api-token
+```
+
+They are created with restrictive permissions and referenced from account metadata.
+
+## Tunnel Token files
+
+Existing/token-only profiles can keep their current location:
 
 ```text
 ~/.config/cloudflare-management/secrets/company-a.token
 ```
 
-The CLI writes token files with mode `600` and secret directories with restrictive permissions.
+New API-provisioned Tunnels use:
 
-Do not commit this directory to Git or sync it into an insecure shared location.
+```text
+~/.config/cloudflare-management/secrets/tunnels/<profile>.token
+```
+
+This preserves backward compatibility while keeping new credential types organized.
+
+## Account aliases vs Tunnel/profile aliases
+
+These are separate namespaces. The following is valid:
+
+```bash
+cfm add company-a
+cfm account add company-a
+```
+
+The first creates/uses `tunnels["company-a"]`; the second creates/uses `accounts["company-a"]`.
+
+## Default Zone ID
+
+An Account record may store an optional `defaultZoneId`. It is used only when DNS automation is requested.
+
+Per-command override:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
+```
+
+Tunnel provisioning itself does not require a Zone ID or DNS permission.
 
 ## Runtime state
 
-When `cfm start <name>` launches `cloudflared`, the CLI records lightweight runtime state such as the process ID and log path.
-
-Runtime state is local and disposable. If the recorded process no longer exists, `cfm status` cleans the stale state.
+When `cfm start <name>` launches `cloudflared`, the CLI records lightweight state such as the PID and log path. Runtime state is local/disposable, and stale PID state is cleaned when detected.
 
 ## Logs
-
-Connector stdout/stderr are appended to:
 
 ```text
 ~/.local/state/cloudflare-management/logs/<profile>.log
 ```
 
-Read recent logs:
-
 ```bash
 cfm logs company-a
-```
-
-Follow them:
-
-```bash
 cfm logs company-a --follow
 ```
 
-Logs may include hostnames, connection errors, and operational metadata. Review logs before sharing them publicly.
+Logs may include hostnames, network errors, and operational metadata. Review them before sharing publicly.
 
-## Recommended profile naming
+## File permissions
 
-Use names that describe the client/security boundary rather than a single hostname:
+Configuration/secret directories use restrictive permissions. Secret files and configuration metadata are written with mode `0600` where supported.
 
-```text
-company-a
-company-b
-personal-lab
-```
-
-A single remotely-managed tunnel can expose multiple hostnames for the same client, so a tunnel profile usually does not need to be named after one webhook provider or one local route.
-
-## What is intentionally not stored
-
-v0.1 does not store:
-
-- account-wide Cloudflare API tokens;
-- Cloudflare login credentials;
-- DNS zone configuration;
-- Published Application route definitions;
-- Access policies.
-
-Those remain managed in Cloudflare.
-
-See [Security](./SECURITY.md) for the security rationale.
+See [Security](./SECURITY.md) for credential scope and rotation guidance.
