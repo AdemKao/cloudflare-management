@@ -1,25 +1,95 @@
-# cloudflare-management
+<div align="center">
 
-**English** · [繁體中文](./README.zh-TW.md) · [日本語](./README.ja.md) · [Back to root README](../README.md)
+# ☁️ Cloudflare Management
 
-`cloudflare-management` is a small local CLI for managing multiple **remotely-managed Cloudflare Tunnel connectors** across different client/company Cloudflare accounts from one development machine.
+**Manage, provision, and expose Cloudflare Tunnels across independent client accounts from one development machine.**
 
-The executable command is `cfm`, with `cloudflare-management` available as an alias.
+A lightweight CLI for developers, freelancers, and consultants who work with multiple Cloudflare accounts and want a safe, repeatable workflow around the official `cloudflared` connector and Cloudflare APIs.
 
-## Why
+**English** · [繁體中文](./README.zh-TW.md) · [日本語](./README.ja.md) · [Root README](../README.md)
 
-This tool is designed for freelance and multi-client development workflows where one Mac may need to connect several independent Cloudflare accounts without repeatedly running `cloudflared tunnel login`, switching account credentials, or mixing client secrets.
+[![CI](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml/badge.svg)](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-Each client keeps its own remotely-managed Tunnel in its own Cloudflare account. `cfm` only stores that Tunnel's connector token locally and manages the corresponding `cloudflared` process.
+</div>
+
+---
+
+## Why this exists
+
+Working with several companies often means several Cloudflare Accounts, domains, Tunnel tokens, API credentials, localhost ports, and connector processes.
+
+`cfm` keeps those security boundaries separate while giving you one local workflow:
+
+```text
+Developer machine
+      │
+     cfm
+      │
+ ┌────┼───────────────┐
+ ▼    ▼               ▼
+A     B               C
+│     │               │
+Cloudflare Account A  Cloudflare Account B  Cloudflare Account C
+│                     │                     │
+Tunnels / routes      Tunnels / routes      Tunnels / routes
+│                     │                     │
+cloudflared            cloudflared            cloudflared
+│                     │                     │
+localhost             localhost             localhost
+```
+
+`cfm` does **not** replace `cloudflared` and does not reimplement the Tunnel protocol.
+
+## Two operating modes
+
+### 1. Tunnel Token mode — lowest privilege
+
+```bash
+cfm add company-a
+cfm start company-a
+```
+
+Use this when the remotely-managed Tunnel already exists. No Account API Token is required.
+
+### 2. Account API mode — optional provisioning
+
+```bash
+cfm account add company-a
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+cfm start project-dev
+```
+
+Account API Tokens and Tunnel Tokens are stored separately.
+
+## Highlights
+
+- multi-account isolation;
+- backward compatibility for existing `cfm add <profile>` users;
+- safe v1 → v2 config migration;
+- explicit Tunnel adoption without duplication;
+- Tunnel provisioning and remote configuration;
+- optional DNS automation;
+- one-command `cfm expose` workflow;
+- mode-`0600` secret files;
+- raw Tunnel Tokens kept out of process args;
+- diagnostics, status, and logs;
+- no runtime npm dependencies.
 
 ## Requirements
 
 - macOS or Linux
 - Node.js 20+
-- `cloudflared` installed and available in `PATH`
-- A remotely-managed Cloudflare Tunnel already created in each client's Cloudflare dashboard
+- `cloudflared` available in `PATH`
+- Cloudflare access appropriate to the selected mode
 
-On macOS with Homebrew:
+macOS:
 
 ```bash
 brew install cloudflared
@@ -27,208 +97,169 @@ brew install cloudflared
 
 ## Install
 
-### Install directly from GitHub
-
-After this feature is merged to `main`:
+Latest from `main`:
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-Verify the installation:
+Specific release:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
+```
+
+Verify:
 
 ```bash
 cfm --version
 cfm --help
 ```
 
-### Install the feature branch before merge
+## Update
+
+Reinstall from `main` to update a GitHub-installed copy:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#feat/local-cli
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
 ```
 
-### Develop locally
+Or pin a release:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
+cfm --version
+```
+
+Local profiles and credentials are stored outside the npm package directory, so reinstalling the CLI does not remove them. v0.1 → v0.2 migration automatically backs up v1 metadata, preserves Tunnel Token paths, and converts existing profiles to `token-only`.
+
+Read [Upgrading](./UPGRADING.en.md) before updating important development machines.
+
+## Quick start: existing Tunnel
+
+```bash
+cfm init
+cfm add company-a
+cfm start company-a
+cfm status company-a
+```
+
+See [Tunnel Token setup](./TUNNEL_TOKEN.en.md).
+
+## Quick start: create a Tunnel from the CLI
+
+```bash
+cfm account add company-a
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001
+cfm start project-dev
+```
+
+Use `--dns` only when the API Token has DNS permission for the required Zone.
+
+## One-command expose workflow
+
+```bash
+cfm expose company-a \
+  --name project-dev \
+  --hostname api-dev.example.com \
+  --port 3001
+```
+
+By default, `cfm expose` configures DNS and starts the connector. Use `--no-dns` or `--no-start` to disable those steps. Token-only profiles are never silently adopted.
+
+## Existing v0.1 users
+
+If you previously ran:
+
+```bash
+cfm add company-a
+```
+
+upgrading does not require re-entering the Tunnel Token or adding an Account API Token:
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
+
+To opt into API management later:
+
+```bash
+cfm account add company-a
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption does not create another Tunnel or replace the existing Tunnel Token by default.
+
+## Command overview
+
+| Area | Commands |
+| --- | --- |
+| Local profiles | `init`, `add`, `remove`, `list` |
+| Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
+| Accounts | `account add/list/show/doctor/remove` |
+| Tunnels | `tunnel list/create/adopt/show/token/delete` |
+| Routes | `route list/add/remove` |
+| Orchestration | `expose` |
+
+See [Command Reference](./COMMANDS.md).
+
+## Security model
+
+```text
+~/.config/cloudflare-management/
+├── config.json
+└── secrets/
+    ├── company-a.token
+    ├── accounts/
+    │   └── company-a.api-token
+    └── tunnels/
+        └── project-dev.token
+```
+
+- API Tokens and Tunnel Tokens are distinct credentials.
+- Secret files use `0600` permissions.
+- Raw credentials are not stored in `config.json`.
+- Normal commands do not print raw tokens.
+- Remote Tunnel deletion requires confirmation or `--yes`.
+- Prefer specific Account/Zone scopes over broad cross-client credentials.
+
+See [Security](./SECURITY.md).
+
+## Documentation
+
+- [Documentation index](./README.md)
+- [繁體中文](./README.zh-TW.md)
+- [日本語](./README.ja.md)
+- [Upgrade guide](./UPGRADING.en.md)
+- [Tunnel Token guide](./TUNNEL_TOKEN.en.md)
+- [Architecture](./ARCHITECTURE.md)
+- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
+- [Command Reference](./COMMANDS.md)
+- [Configuration](./CONFIGURATION.md)
+- [Security](./SECURITY.md)
+- [Troubleshooting](./TROUBLESHOOTING.md)
+- [Roadmap](./ROADMAP.md)
+- [Changelog](../CHANGELOG.md)
+
+## Development
 
 ```bash
 git clone https://github.com/AdemKao/cloudflare-management.git
 cd cloudflare-management
 npm link
-```
-
-`cfm` is now globally available while pointing to the local checkout.
-
-To unlink later:
-
-```bash
-npm unlink -g cloudflare-management
-```
-
-## Cloudflare setup
-
-For each company/client:
-
-1. Open that client's Cloudflare account.
-2. Create a **remotely-managed Cloudflare Tunnel** in the dashboard.
-3. Configure the Published Application hostname(s) and localhost service(s) in Cloudflare.
-4. Open the Tunnel and copy its connector token from the **Add a replica** installation command.
-5. Add the token to `cfm`.
-
-Example:
-
-```text
-Company A Cloudflare account
-└── company-a-dev tunnel
-    ├── api-dev.company-a.com     -> http://localhost:3001
-    └── hook-dev.company-a.com    -> http://localhost:3002
-
-Company B Cloudflare account
-└── company-b-dev tunnel
-    └── api-dev.company-b.com     -> http://localhost:4001
-
-Company C Cloudflare account
-└── company-c-dev tunnel
-    ├── app-dev.company-c.com     -> http://localhost:5001
-    └── webhook-dev.company-c.com -> http://localhost:5002
-```
-
-Cloudflare accounts and domains remain isolated. `cfm` only manages local connector processes.
-
-## First-time setup
-
-Initialize local directories:
-
-```bash
-cfm init
-```
-
-Add a client/company profile:
-
-```bash
-cfm add claire
-```
-
-The CLI prompts for the Tunnel token without echoing it to the terminal.
-
-Or import a token from an existing local file:
-
-```bash
-cfm add client-b --token-file ~/Downloads/client-b.token
-```
-
-The token is copied to:
-
-```text
-~/.config/cloudflare-management/secrets/<name>.token
-```
-
-The token file is stored with mode `600`.
-
-## Commands
-
-```bash
-# Add/remove local tunnel profiles
-cfm add claire
-cfm remove claire
-
-# View configured profiles and process state
-cfm list
-cfm status
-cfm status claire
-
-# Start/stop one client tunnel
-cfm start claire
-cfm stop claire
-cfm restart claire
-
-# Start/stop every configured client tunnel
-cfm start-all
-cfm stop-all
-
-# Logs
-cfm logs claire
-cfm logs claire --follow
-
-# Diagnostics
-cfm doctor
-cfm doctor claire
-
-# Show config file location
-cfm config
-```
-
-Example:
-
-```text
-$ cfm status
-NAME       STATUS   PID
-claire     running  91231
-client-b   stopped  -
-client-c   running  91402
-```
-
-## Local files
-
-Configuration:
-
-```text
-~/.config/cloudflare-management/config.json
-```
-
-Tunnel tokens:
-
-```text
-~/.config/cloudflare-management/secrets/
-```
-
-Runtime state and logs:
-
-```text
-~/.local/state/cloudflare-management/
-├── logs/
-└── runtime/
-```
-
-`XDG_CONFIG_HOME` and `XDG_STATE_HOME` are respected when set.
-
-## Security model
-
-- Tunnel tokens are **never stored in this Git repository**.
-- Tokens are stored in local files with mode `600`.
-- `cfm start` uses `cloudflared tunnel run --token-file ...`, so the token itself is not placed in the process command line.
-- Use one remotely-managed Tunnel per client/security boundary when clients use separate Cloudflare accounts.
-- A Cloudflare Tunnel token is a sensitive credential. Rotate or revoke it in Cloudflare when access should be removed.
-
-## Scope of v0.1
-
-This version deliberately does **not** request a high-privilege Cloudflare API token and does not create DNS/routes automatically.
-
-Cloudflare Dashboard owns:
-
-- Tunnel creation
-- Published Application routes
-- DNS/domain configuration
-- Token rotation/revocation
-
-`cfm` owns:
-
-- Local token storage
-- Starting/stopping local `cloudflared` connectors
-- Status
-- Logs
-- Diagnostics
-
-A future version can optionally add Cloudflare API integration if managing routes manually becomes a bottleneck.
-
-## Development
-
-```bash
 npm run check
 ```
 
-This runs syntax checks and the Node test suite.
+## Scope
 
-## Additional documentation
+`cfm` is a focused Cloudflare Tunnel workflow tool, not a general-purpose Cloudflare administration CLI. Cloudflare remains the source of truth for Accounts, Zones, Tunnels, remote configuration, DNS, Access policies, and credential lifecycle.
 
-- [Architecture](./ARCHITECTURE.md)
-- [Security](./SECURITY.md)
+## License
+
+[MIT](../LICENSE) © 2026 Adem Kao

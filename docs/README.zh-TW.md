@@ -1,25 +1,102 @@
-# cloudflare-management
+<div align="center">
 
-[English](./README.en.md) · **繁體中文** · [日本語](./README.ja.md) · [回到主 README](../README.md)
+# ☁️ Cloudflare Management
 
-`cloudflare-management` 是一個小型本機 CLI，用來在同一台開發機上管理多個、分屬不同公司或客戶 Cloudflare Account 的 **remotely-managed Cloudflare Tunnel connector**。
+**在同一台開發機上，安全管理、建立並公開多個客戶 Cloudflare Account 的 Tunnel。**
 
-可執行指令為 `cfm`，也可以使用 `cloudflare-management` 作為別名。
+給同時維護多間公司、客戶或專案的開發者、自由接案者與顧問使用；透過官方 `cloudflared` connector 與 Cloudflare API，提供一致、可重複且權限清楚的工作流程。
 
-## 為什麼需要它
+[English](../README.md) · **繁體中文** · [日本語](./README.ja.md)
 
-這個工具主要解決自由接案、多公司、多客戶的開發情境：同一台 Mac 可能同時需要連接多個互相獨立的 Cloudflare Account，但又不希望一直執行 `cloudflared tunnel login`、切換 account credential，或把不同客戶的憑證混在一起。
+[![CI](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml/badge.svg)](https://github.com/AdemKao/cloudflare-management/actions/workflows/ci.yml)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-每個客戶仍然在自己的 Cloudflare Account 中持有自己的 remotely-managed Tunnel；`cfm` 只負責在本機安全保存該 Tunnel 的 connector token，以及啟動、停止與監控對應的 `cloudflared` process。
+</div>
+
+---
+
+> 此繁體中文版與 root `README.md` 使用相同資訊架構；新增功能、安裝、升級、安全與 Quick Start 應同步維護。
+
+## 為什麼需要這個工具
+
+同時維護多間公司時，通常也會同時面對多個 Cloudflare Account、Domain、Tunnel Token、API Token、localhost port，以及多個 `cloudflared` process。
+
+`cfm` 保留不同客戶之間的安全邊界，同時把本機操作流程統一：
+
+```text
+開發者電腦
+      │
+     cfm
+      │
+ ┌────┼───────────────┐
+ ▼    ▼               ▼
+A     B               C
+│     │               │
+Cloudflare Account A  Cloudflare Account B  Cloudflare Account C
+│                     │                     │
+Tunnels / routes      Tunnels / routes      Tunnels / routes
+│                     │                     │
+cloudflared            cloudflared            cloudflared
+│                     │                     │
+localhost             localhost             localhost
+```
+
+`cfm` **不會取代 `cloudflared`**，也不會重新實作 Cloudflare Tunnel protocol。
+
+## 兩種操作模式
+
+### 1. Tunnel Token 模式 — 最低權限
+
+如果 Cloudflare 上已經有 remotely-managed Tunnel，只需要把該 Tunnel 的 Token 保存到本機：
+
+```bash
+cfm add company-a
+cfm start company-a
+```
+
+不需要 Account API Token。
+
+### 2. Account API 模式 — 可選的資源管理
+
+如果希望直接從 CLI 建立與管理 Cloudflare 資源：
+
+```bash
+cfm account add company-a
+cfm tunnel create company-a project-dev
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+cfm start project-dev
+```
+
+Account API Token 與 Tunnel Token 會分開保存。
+
+## 功能重點
+
+- **多 Account 隔離** — 不同公司可以使用彼此獨立的 Account/API/Tunnel credential。
+- **向後相容** — 已經使用 `cfm add <profile>` 的 v0.1 使用者升級後仍可直接繼續使用。
+- **安全 Migration** — v1 metadata 會先備份，再原子化、可重複地升級成 schema v2。
+- **Explicit Adoption** — 可以把既有 Tunnel 納入 API 管理，不會因此重複建立另一條 Tunnel。
+- **Tunnel Provisioning** — 支援 list/create/show/delete remotely-managed Tunnel。
+- **Published Hostname 管理** — 設定 hostname → origin 規則。
+- **可選 DNS 自動化** — 只有在明確要求且 API Token 有權限時才建立/移除 CNAME。
+- **一條指令公開服務** — `cfm expose` 可組合 Tunnel + route + DNS + connector startup。
+- **Secret 保護** — Token 保存於 repo 外，檔案權限為 `0600`。
+- **Process args 不放 raw Tunnel Token** — 使用 `cloudflared tunnel run --token-file ...`。
+- **診斷與 Log** — 內建 `doctor`、`status` 與 log follow。
+- **零 runtime npm dependency** — 僅需要 Node.js 20+。
 
 ## 系統需求
 
 - macOS 或 Linux
 - Node.js 20+
-- 已安裝 `cloudflared`，且可從 `PATH` 執行
-- 每個客戶的 Cloudflare Dashboard 中都已建立 remotely-managed Cloudflare Tunnel
+- `cloudflared` 已安裝且存在於 `PATH`
+- 依使用模式具備對應的 Cloudflare Account 權限
 
-macOS + Homebrew：
+macOS：
 
 ```bash
 brew install cloudflared
@@ -27,12 +104,16 @@ brew install cloudflared
 
 ## 安裝
 
-### 直接從 GitHub 安裝
-
-功能合併到 `main` 後：
+從 `main` 安裝最新版：
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
+```
+
+安裝指定 release tag：
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
 ```
 
 確認安裝：
@@ -42,146 +123,187 @@ cfm --version
 cfm --help
 ```
 
-### PR 合併前安裝 feature branch
+## 更新版本
+
+如果原本就是直接從 GitHub 安裝 `cfm`，更新時重新安裝 `main` 即可：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#feat/local-cli
+npm install -g github:AdemKao/cloudflare-management
+cfm --version
 ```
 
-### 本機開發
+如果要鎖定指定 release：
 
 ```bash
-git clone https://github.com/AdemKao/cloudflare-management.git
-cd cloudflare-management
-npm link
+npm install -g github:AdemKao/cloudflare-management#v0.2.0
+cfm --version
 ```
 
-此時 `cfm` 會成為全域可用指令，但實際執行的是你本機 checkout 的程式碼。
+Profile、Account API Token、Tunnel Token、runtime state 與 logs 都保存在 npm package 目錄之外，因此重新安裝/更新 CLI **不會刪除既有設定**。
 
-解除連結：
+從 v0.1 升級到 v0.2 時，第一次讀取設定會先備份 v1 metadata，然後自動把既有 profile 遷移成 `token-only`，並保留原本的 Tunnel Token 路徑。
 
-```bash
-npm unlink -g cloudflare-management
-```
+重要開發機或客戶環境升級前，請先閱讀 [升級指南](./UPGRADING.zh-TW.md)。
 
-## Cloudflare 設定方式
+## Quick Start：已經有 Tunnel
 
-針對每一間公司或客戶：
-
-1. 進入該客戶的 Cloudflare Account。
-2. 在 Dashboard 建立 **remotely-managed Cloudflare Tunnel**。
-3. 在 Cloudflare 設定 Published Application hostname 與對應 localhost service。
-4. 開啟 Tunnel，從 **Add a replica** 的安裝指令取得 connector token。
-5. 使用 `cfm add` 將 token 安全加入本機。
-
-例如：
-
-```text
-Company A Cloudflare Account
-└── company-a-dev tunnel
-    ├── api-dev.company-a.com     -> http://localhost:3001
-    └── hook-dev.company-a.com    -> http://localhost:3002
-
-Company B Cloudflare Account
-└── company-b-dev tunnel
-    └── api-dev.company-b.com     -> http://localhost:4001
-
-Company C Cloudflare Account
-└── company-c-dev tunnel
-    ├── app-dev.company-c.com     -> http://localhost:5001
-    └── webhook-dev.company-c.com -> http://localhost:5002
-```
-
-Cloudflare Account 與 Domain 彼此仍完全隔離；`cfm` 只管理本機 connector process。
-
-## 第一次使用
-
-初始化本機資料夾：
+先從 Cloudflare Dashboard 取得 Tunnel Token：
 
 ```bash
 cfm init
+cfm add company-a
+cfm start company-a
+cfm status company-a
 ```
 
-新增公司或客戶：
+Cloudflare Dashboard 的完整操作路徑請看 [Tunnel Token 指南](./TUNNEL_TOKEN.zh-TW.md)。
+
+## Quick Start：直接從 CLI 建立 Tunnel
+
+先加入一組最小權限的 Cloudflare Account API credential：
 
 ```bash
-cfm add claire
+cfm account add company-a
 ```
 
-CLI 會要求輸入 Tunnel token，輸入過程不會回顯在 terminal。
-
-也可以從既有 token file 匯入：
+也可以用非互動模式：
 
 ```bash
-cfm add client-b --token-file ~/Downloads/client-b.token
+cfm account add company-a \
+  --account-id <ACCOUNT_ID> \
+  --token-file ~/.secrets/company-a-api-token \
+  --zone-id <OPTIONAL_DEFAULT_ZONE_ID>
 ```
 
-Token 會複製到：
-
-```text
-~/.config/cloudflare-management/secrets/<name>.token
-```
-
-Token file 權限設為 `600`。
-
-## 常用指令
+建立 Tunnel：
 
 ```bash
-# 新增 / 移除 local tunnel profile
-cfm add claire
-cfm remove claire
-
-# 查看設定與 process 狀態
-cfm list
-cfm status
-cfm status claire
-
-# 啟動 / 停止單一公司 tunnel
-cfm start claire
-cfm stop claire
-cfm restart claire
-
-# 啟動 / 停止全部 tunnel
-cfm start-all
-cfm stop-all
-
-# 查看 log
-cfm logs claire
-cfm logs claire --follow
-
-# 環境診斷
-cfm doctor
-cfm doctor claire
-
-# 顯示 config 位置
-cfm config
+cfm tunnel create company-a project-dev
 ```
 
-範例：
+設定 published hostname：
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001
+```
+
+如果 API Token 同時具備該 Zone 的 DNS 權限，可以加上 `--dns`：
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+```
+
+最後啟動 connector：
+
+```bash
+cfm start project-dev
+```
+
+## 一條指令公開服務：`cfm expose`
+
+Account 已設定 default Zone ID 時，可以直接：
+
+```bash
+cfm expose company-a \
+  --name project-dev \
+  --hostname api-dev.example.com \
+  --port 3001
+```
+
+流程如下：
 
 ```text
-$ cfm status
-NAME       STATUS   PID
-claire     running  91231
-client-b   stopped  -
-client-c   running  91402
+驗證 Account credential
+       ↓
+重用 adopted / provisioned Tunnel
+如果沒有 local profile 才建立新的 Tunnel
+       ↓
+設定 hostname → origin
+       ↓
+除非 --no-dns，否則管理 DNS
+       ↓
+除非 --no-start，否則啟動 cloudflared
+       ↓
+輸出 public URL / status
 ```
 
-## 本機檔案位置
+`cfm expose` 不會偷偷把 `token-only` profile adopt 進 API 管理；需要先明確執行 `cfm tunnel adopt`。
 
-設定檔：
+## 已經使用過 v0.1 的使用者
+
+假設你之前已經執行：
+
+```bash
+cfm add company-a
+```
+
+升級後可以直接繼續：
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
+
+Profile 會遷移成：
 
 ```text
-~/.config/cloudflare-management/config.json
+managementMode: token-only
+account: null
+tunnelId: null
+原本 tokenFile 路徑保留
 ```
 
-Tunnel tokens：
+如果未來希望把同一條既有 Tunnel 納入 API 管理：
+
+```bash
+cfm account add company-a
+cfm tunnel adopt company-a company-a
+```
+
+如果名稱無法唯一判斷，請明確指定 remote Tunnel：
+
+```bash
+cfm tunnel adopt company-a company-a \
+  --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption 不會建立第二條 Tunnel，也不會預設覆蓋原本的 Tunnel Token。
+
+## 指令總覽
+
+| 區域 | 指令 |
+| --- | --- |
+| Local profiles | `init`, `add`, `remove`, `list` |
+| Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
+| Accounts | `account add/list/show/doctor/remove` |
+| Tunnels | `tunnel list/create/adopt/show/token/delete` |
+| Routes | `route list/add/remove` |
+| Orchestration | `expose` |
+
+完整參數請看 [Command Reference](./COMMANDS.md)。
+
+## Security Model
+
+不同用途的 Secret 會分開保存：
 
 ```text
-~/.config/cloudflare-management/secrets/
+~/.config/cloudflare-management/
+├── config.json
+└── secrets/
+    ├── company-a.token                 # 舊版 / token-only 路徑可保留
+    ├── accounts/
+    │   └── company-a.api-token
+    └── tunnels/
+        └── project-dev.token
 ```
 
-Runtime state 與 logs：
+Runtime data：
 
 ```text
 ~/.local/state/cloudflare-management/
@@ -189,46 +311,50 @@ Runtime state 與 logs：
 └── runtime/
 ```
 
-如果有設定 `XDG_CONFIG_HOME` / `XDG_STATE_HOME`，CLI 會遵循 XDG 路徑。
+主要原則：
 
-## 安全模型
+- API Token 與 Tunnel Token 是兩種不同 credential。
+- Secret file 權限為 `0600`。
+- Raw credential 不會寫進 `config.json`。
+- 正常指令不會輸出 raw token。
+- Remote Tunnel delete 需要確認或 `--yes`。
+- 不同客戶應使用限制到特定 Account / Zone 的最小權限 Token，不要共用跨客戶的高權限 credential。
 
-- Tunnel token **永遠不會存進 Git repository**。
-- Token 使用本機檔案保存，權限為 `600`。
-- `cfm start` 使用 `cloudflared tunnel run --token-file ...`，避免把 token 直接暴露在 process command line。
-- 不同客戶 / security boundary 建議使用不同 remotely-managed Tunnel。
-- Cloudflare Tunnel token 屬於敏感憑證，離場或權限變更時應在 Cloudflare 立即 rotate / revoke。
+完整說明請看 [Security](./SECURITY.md)。
 
-## v0.1 範圍
+## 文件
 
-第一版刻意不要求高權限 Cloudflare API token，也不會自動建立 DNS 或 route。
-
-Cloudflare Dashboard 負責：
-
-- Tunnel 建立
-- Published Application routes
-- DNS / Domain 設定
-- Token rotate / revoke
-
-`cfm` 負責：
-
-- 本機 token 保存
-- 啟動 / 停止 `cloudflared` connectors
-- Status
-- Logs
-- Diagnostics
-
-未來如果 Dashboard 手動設定 route 變成維運瓶頸，再考慮加入 Cloudflare API integration。
+- [文件索引](./README.md)
+- [English guide](./README.en.md)
+- **繁體中文**
+- [日本語](./README.ja.md)
+- [升級指南](./UPGRADING.zh-TW.md)
+- [Tunnel Token 指南](./TUNNEL_TOKEN.zh-TW.md)
+- [Architecture](./ARCHITECTURE.md)
+- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
+- [Command Reference](./COMMANDS.md)
+- [Configuration](./CONFIGURATION.md)
+- [Security](./SECURITY.md)
+- [Troubleshooting](./TROUBLESHOOTING.md)
+- [Roadmap](./ROADMAP.md)
 
 ## 開發
 
 ```bash
+git clone https://github.com/AdemKao/cloudflare-management.git
+cd cloudflare-management
+npm link
 npm run check
 ```
 
-這會執行 syntax check 與 Node test suite。
+測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention 與 adoption 等情境，Cloudflare API 測試使用 mocked response。
 
-## 延伸文件
+## 專案範圍
 
-- [Architecture](./ARCHITECTURE.md)
-- [Security](./SECURITY.md)
+`cfm` 的目標是成為聚焦於 Cloudflare Tunnel 工作流程的 CLI，而不是完整的 Cloudflare Account 管理工具。
+
+Cloudflare 仍然是 Account、Zone、Tunnel、remote configuration、DNS、Access policy 與 credential 發行/撤銷的 source of truth。
+
+## License
+
+[MIT](../LICENSE) © 2026 Adem Kao

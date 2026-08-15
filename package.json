@@ -1,7 +1,7 @@
 {
   "name": "cloudflare-management",
-  "version": "0.1.0",
-  "description": "A lightweight CLI for managing multiple Cloudflare Tunnel connectors across independent client accounts.",
+  "version": "0.2.0",
+  "description": "A lightweight CLI for managing and optionally provisioning Cloudflare Tunnel connectors across independent client accounts.",
   "type": "module",
   "bin": {
     "cfm": "./bin/cfm.js",
@@ -12,11 +12,12 @@
     "src",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
-    "lint": "node --check bin/cfm.js && node --check src/cli.js",
+    "lint": "node --check bin/cfm.js && node --check src/cli.js && node --check src/config.js && node --check src/secrets.js && node --check src/process.js && node --check src/resources.js && node --check src/validation.js && node --check src/cloudflare/client.js",
     "check": "npm run lint && npm test"
   },
   "engines": {

@@ -1,29 +1,24 @@
 # Troubleshooting
 
-This guide focuses on the most common local-development failures when using `cfm` with remotely-managed Cloudflare Tunnels.
+This guide covers local connector problems and v0.2 Account/Tunnel/Route API-mode failures.
 
 ## Start here
 
-Run:
+Local connector diagnostics:
 
 ```bash
 cfm doctor
-```
-
-Then inspect the affected profile:
-
-```bash
 cfm status company-a
 cfm logs company-a
 ```
 
-## `cloudflared` is not found
+Account API diagnostics:
 
-Symptom:
-
-```text
-cloudflared is not installed or not available in PATH.
+```bash
+cfm account doctor company-a
 ```
+
+## `cloudflared` is not found
 
 Confirm:
 
@@ -31,158 +26,301 @@ Confirm:
 cloudflared --version
 ```
 
-On macOS with Homebrew:
+macOS:
 
 ```bash
 brew install cloudflared
 ```
 
-If the binary is installed but not found, verify your shell `PATH`.
+If installed but unresolved, inspect your shell `PATH`.
 
 ## Tunnel exits immediately after `cfm start`
-
-Run:
 
 ```bash
 cfm logs company-a
 ```
 
-Typical causes include:
+Typical causes:
 
-- invalid or incomplete tunnel token;
-- token was rotated/revoked in Cloudflare;
-- the remotely-managed tunnel was deleted;
-- `cloudflared` rejected the connector configuration.
+- invalid/incomplete Tunnel Token;
+- token rotated or revoked;
+- remote Tunnel deleted;
+- connector configuration rejected.
 
-If the token changed, replace the local profile using a new token:
+For a token-only profile, replace the local token when appropriate:
 
 ```bash
 cfm add company-a --token-file ~/Downloads/company-a-new.token --force
 ```
 
-Then:
+For an adopted/provisioned Tunnel managed through API mode, refresh the connector token without printing it:
 
 ```bash
-cfm restart company-a
+cfm tunnel token company-a solana-dev
 ```
+
+Then restart:
+
+```bash
+cfm restart solana-dev
+```
+
+## Account API returns 401
+
+Run:
+
+```bash
+cfm account doctor company-a
+```
+
+A 401 normally means the configured API credential is invalid/expired/revoked. Create or rotate a scoped Cloudflare API Token and replace the local Account credential:
+
+```bash
+cfm account add company-a --force
+```
+
+The replacement credential is verified before it replaces the existing local token.
+
+## Account API returns 403
+
+The token is recognized but lacks permission for the requested resource/action.
+
+Separate the two permission areas:
+
+```text
+Tunnel operations → Account-level Tunnel permission
+DNS operations    → Zone-level DNS permission
+```
+
+If you only need Tunnel/route configuration, do not request DNS mutation:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001
+```
+
+For `cfm expose`, disable DNS when the token intentionally has no DNS permission:
+
+```bash
+cfm expose company-a \
+  --name solana-dev \
+  --hostname webhook-dev.example.com \
+  --port 3001 \
+  --no-dns
+```
+
+Do not fix a 403 by automatically broadening a token to all Accounts/Zones.
+
+## API returns 404
+
+Check that the configured Account ID, Zone ID, and Tunnel ID belong to the same intended client/security boundary.
+
+Useful commands:
+
+```bash
+cfm account show company-a
+cfm tunnel list company-a
+cfm tunnel show company-a solana-dev
+```
+
+A token-only profile does not necessarily have a known remote Tunnel ID until it is explicitly adopted.
+
+## API returns 409 / resource conflict
+
+A local or remote resource may already exist. First inspect:
+
+```bash
+cfm list
+cfm tunnel list company-a
+```
+
+If the Tunnel already exists and you previously used:
+
+```bash
+cfm add company-a
+```
+
+do **not** create another Tunnel. Adopt the existing one:
+
+```bash
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
+```
+
+## API returns 429
+
+Cloudflare is rate limiting requests. Stop repeated retry loops and retry later. `cfm` surfaces the 429 rather than hiding it.
+
+## Cloudflare 5xx or timeout
+
+Retry after confirming the local network is healthy. Avoid destructive retries when a create/delete result is uncertain; inspect remote state first:
+
+```bash
+cfm tunnel list company-a
+```
+
+## `cfm tunnel adopt` cannot uniquely resolve a Tunnel
+
+Automatic adoption only accepts a unique remote-name match. If multiple/zero candidates match, specify the exact remote ID:
+
+```bash
+cfm tunnel list company-a
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption does not create another Tunnel and preserves the existing local Tunnel Token by default.
+
+## Existing v0.1 profile stopped working after upgrade
+
+A profile created with:
+
+```bash
+cfm add company-a
+```
+
+should migrate to `token-only` and keep its existing token path.
+
+Inspect:
+
+```bash
+cfm list
+cfm doctor company-a
+cfm config
+```
+
+During the first v1 → v2 migration, metadata backup is stored at:
+
+```text
+~/.config/cloudflare-management/config.v1.backup.json
+```
+
+Do not delete or replace the existing Tunnel Token while diagnosing migration problems.
+
+## Route command says a Zone ID is required
+
+DNS automation needs a Zone ID. Either configure one on the Account, pass one explicitly, or avoid DNS mutation.
+
+Explicit Zone ID:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
+```
+
+Route only:
+
+```bash
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001
+```
+
+## `cfm expose` refuses a token-only profile
+
+This is intentional safety behavior. `cfm expose` will not silently guess which remote Tunnel belongs to an old local token.
+
+Explicitly adopt first:
+
+```bash
+cfm account add company-a
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
+```
+
+Then re-run `cfm expose`.
 
 ## Tunnel is running but the public hostname returns an error
 
-First confirm the connector is alive:
+Confirm connector state:
 
 ```bash
-cfm status company-a
+cfm status solana-dev
+cfm logs solana-dev
 ```
 
-Then check the local origin directly.
-
-For example, if Cloudflare routes to `http://localhost:3001`:
+Check the local origin directly:
 
 ```bash
 curl -i http://localhost:3001
 ```
 
-If the local service is unavailable, fix the application before debugging the tunnel.
+Inspect configured routes:
 
-If localhost works, check the Published Application route in the correct client Cloudflare account:
-
-```text
-hostname → correct local service/port
+```bash
+cfm route list company-a solana-dev
 ```
 
-Also confirm you are editing the same Cloudflare account that owns the tunnel token used by the profile.
+If DNS was expected, verify the hostname resolves to the Tunnel target in the intended Zone.
 
 ## Public hostname returns 404
 
 Possible causes:
 
-- Published Application hostname is missing;
-- hostname belongs to a different tunnel/account;
-- application route points at the wrong localhost port;
-- your backend does not implement the requested path.
+- hostname route missing/wrong;
+- hostname belongs to another Tunnel/Account;
+- backend path does not exist;
+- request fell through to the Tunnel catch-all rule.
 
-For a webhook endpoint, test the exact path locally first:
+Test the exact application path locally first:
 
 ```bash
 curl -i http://localhost:3001/webhooks/example
 ```
 
-A working tunnel cannot fix an application-level 404.
+## Public hostname returns 502 / Bad Gateway
 
-## Public hostname returns 502/Bad Gateway
-
-This usually indicates that the tunnel reached the connector but `cloudflared` could not reach the configured local origin.
+The Tunnel can be connected while the configured origin is unavailable.
 
 Check:
 
 ```bash
 lsof -i :3001
 curl -i http://localhost:3001
+cfm logs solana-dev
 ```
 
-Then verify the port configured in Cloudflare.
-
-## `cfm status` says stopped but you expected it to be running
-
-Inspect logs:
+Then compare with:
 
 ```bash
-cfm logs company-a
+cfm route list company-a solana-dev
 ```
-
-Then restart:
-
-```bash
-cfm start company-a
-```
-
-The CLI removes stale runtime state when the recorded process no longer exists.
 
 ## Token permission warning
-
-Run:
 
 ```bash
 cfm doctor company-a
 ```
 
-If it warns that permissions are broader than `600`, restrict the file:
+If a Tunnel Token file is broader than `0600`, restrict it:
 
 ```bash
 chmod 600 ~/.config/cloudflare-management/secrets/company-a.token
 ```
 
-The parent secret directory should also remain private to the local user.
+Account API Token files should also remain private.
 
 ## Wrong client/account confusion
 
-When working with multiple companies, use explicit profile names:
+Use explicit aliases and inspect both namespaces:
 
 ```bash
 cfm list
-cfm status
+cfm account list
+cfm tunnel list company-a
 ```
 
-Recommended naming:
-
-```text
-company-a
-company-b
-company-c
-```
-
-Avoid generic names such as `dev`, `test`, or `tunnel1` when they make ownership ambiguous.
-
-Remember: each profile token belongs to one remotely-managed tunnel in one Cloudflare account.
+Remember that Account alias `company-a` and Tunnel/profile alias `company-a` may intentionally coexist but represent different resource types.
 
 ## Webhook provider cannot reach your local endpoint
 
-Verify each layer separately:
+Verify layers separately:
 
 ```text
 Webhook provider
       ↓
-Public hostname
+public hostname / DNS
       ↓
 Cloudflare edge
       ↓
@@ -193,41 +331,29 @@ localhost service
 exact application route
 ```
 
-Recommended sequence:
+Suggested sequence:
 
 ```bash
-# 1. Local application
 curl -i http://localhost:3001/webhooks/provider
-
-# 2. Connector
-cfm status company-a
-cfm logs company-a
-
-# 3. Public route
+cfm status solana-dev
+cfm logs solana-dev
+cfm route list company-a solana-dev
 curl -i https://your-dev-hostname.example.com/webhooks/provider
 ```
 
-Only after all three work should you debug provider-specific signatures or payload handling.
+Only after these layers work should you debug provider-specific signature/payload handling.
 
 ## `cfm logs --follow` does not work
 
-The current implementation uses the local `tail` command for follow mode. `cfm` v0.1 targets macOS and Linux, where `tail` is normally available.
-
-Check:
-
-```bash
-tail --version
-```
-
-On macOS, BSD `tail` does not support `--version`; simply confirm that `tail` resolves:
+Follow mode uses the local `tail` command. The supported targets are macOS and Linux.
 
 ```bash
 which tail
 ```
 
-## Need more information
+## Reporting a bug
 
-When reporting a bug, include:
+Include:
 
 ```bash
 node --version
@@ -236,4 +362,10 @@ cfm --version
 cfm doctor
 ```
 
-Also include the relevant error/log excerpt, but **remove tokens, client secrets, private hostnames, or other sensitive values before posting publicly**.
+For API issues also include sanitized output from:
+
+```bash
+cfm account show <account>
+```
+
+Never post Tunnel Tokens, Account API Tokens, Authorization headers, client secrets, or sensitive private hostnames in public issues.
