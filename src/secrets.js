@@ -57,15 +57,25 @@ export async function promptLine(label, { input = process.stdin, output = proces
   input.setEncoding('utf8');
   input.resume();
   return new Promise((resolve, reject) => {
-    const onData = (chunk) => {
-      const text = String(chunk);
-      const newline = text.search(/[\r\n]/);
-      if (newline === -1) return;
+    let value = '';
+    const cleanup = () => {
       input.removeListener('data', onData);
+      input.removeListener('error', onError);
       input.pause();
-      resolve(text.slice(0, newline).trim());
     };
-    input.on('error', reject);
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk) => {
+      value += String(chunk);
+      const newline = value.search(/[\r\n]/);
+      if (newline === -1) return;
+      const result = value.slice(0, newline).trim();
+      cleanup();
+      resolve(result);
+    };
+    input.on('error', onError);
     input.on('data', onData);
   });
 }
