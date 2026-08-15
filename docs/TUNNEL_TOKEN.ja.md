@@ -2,15 +2,15 @@
 
 [English](./TUNNEL_TOKEN.en.md) · [繁體中文](./TUNNEL_TOKEN.zh-TW.md) · **日本語**
 
-`cfm` v0.1 が使用するのは **Cloudflare Tunnel Token** です。Cloudflare のプロフィール設定で作成する一般的な **API Token** ではありません。
+`cfm` の **Tunnel Token モード**では Cloudflare Tunnel Token を使用します。これは Account API モードで使用する **API Token** とは別の credential です。
 
-Tunnel Token は、特定の remotely-managed Tunnel に対して `cloudflared` connector を実行するための credential です。Token 自体が Tunnel に紐づいているため、`cfm` に Cloudflare Account ID を別途設定する必要はありません。
+Tunnel Token は特定の remotely-managed Tunnel に対して `cloudflared` connector を実行するための credential です。Token 自体が Tunnel に紐づいているため、`cfm add <profile>` だけを使う場合は Cloudflare Account ID は不要です。
 
-> Tunnel Token は機密情報です。Token を持つ人はその Tunnel の connector を実行できます。Issue、PR、公開チャット、スクリーンショット、Git commit には含めないでください。
+> Tunnel Token は機密情報です。Issue、PR、公開チャット、スクリーンショット、Git commit には含めないでください。
 
 ## 現在の Cloudflare Dashboard ではどこから取得する？
 
-Cloudflare の 2026 年現在の Dashboard では、次の順に移動します。
+Cloudflare の 2026 年現在の Dashboard：
 
 ```text
 Cloudflare Dashboard
@@ -25,48 +25,36 @@ Cloudflare Dashboard
 その後：
 
 1. **Add a replica** に表示される `cloudflared` installation command を確認します。
-2. Command をローカルのテキストエディタにコピーし、**そのまま実行しないでください**。
+2. Command をローカルのテキストエディタへコピーし、**そのまま実行しないでください**。
 3. `eyJ...` で始まる文字列を探します。
 4. その Tunnel Token だけを `cfm add` に入力します。
 
-Cloudflare 公式ドキュメント：
+公式ドキュメント：
 
 - https://developers.cloudflare.com/tunnel/advanced/tunnel-tokens/
 - https://developers.cloudflare.com/tunnel/configuration/
 
 ## 例
 
-Cloudflare には次のような command が表示されます。
+Cloudflare には次のような command が表示されます：
 
 ```bash
 cloudflared tunnel run --token eyJ...
 ```
 
-必要なのは次の部分だけです。
-
-```text
-eyJ...
-```
-
-Installation command 全体を `cfm` に貼り付けないでください。
-
-ローカル profile を追加します。
+必要なのは `eyJ...` の部分だけです。
 
 ```bash
 cfm add company-a
 ```
 
-CLI には次の prompt が表示されます。
-
-```text
-Tunnel token: ************
-```
-
-`eyJ...` token を貼り付けて Enter を押します。
+CLI の hidden prompt に Tunnel Token を入力します。
 
 ## Tunnel がまだない場合
 
-まず remotely-managed Tunnel を作成します。
+v0.2 では 2 つの方法があります。
+
+### Option A：Dashboard で作成
 
 ```text
 Cloudflare Dashboard
@@ -75,39 +63,37 @@ Cloudflare Dashboard
 → Create a tunnel
 ```
 
-作成後：
+作成後、**Overview → Add a replica** から Tunnel Token を取得し：
 
-```text
-Tunnel
-→ Overview
-→ Add a replica
+```bash
+cfm add company-a
 ```
 
-から token を取得します。
+### Option B：`cfm` から直接作成
+
+まず最小権限の Account API credential を登録します：
+
+```bash
+cfm account add company-a
+```
+
+その後 Tunnel を作成：
+
+```bash
+cfm tunnel create company-a project-dev
+```
+
+この場合 `cfm` が Tunnel Token を取得して安全に保存するため、Dashboard から手動コピーする必要はありません。
 
 公式セットアップガイド：
 
 - https://developers.cloudflare.com/tunnel/setup/
 
-## 複数の Cloudflare Account を使う場合
+## 複数の Cloudflare Account
 
-各会社の Cloudflare Account から、それぞれ別の Tunnel Token を取得します。
+会社ごとに credential を分離してください。
 
-```text
-Company A Cloudflare Account
-└── company-a-dev
-    └── Tunnel Token A
-
-Company B Cloudflare Account
-└── company-b-dev
-    └── Tunnel Token B
-
-Company C Cloudflare Account
-└── company-c-dev
-    └── Tunnel Token C
-```
-
-それぞれを個別に追加します。
+Tunnel Token モード：
 
 ```bash
 cfm add company-a
@@ -115,19 +101,17 @@ cfm add company-b
 cfm add company-c
 ```
 
-Token はローカルで分離して保存されるため、`cloudflared tunnel login` の credential を何度も切り替える必要はありません。
+Account API モードでも、会社ごとに Account alias と scoped API Token を分け、関係のないクライアント間で unrestricted credential を共有しないでください。
 
 ## Core Dashboard と Cloudflare One Dashboard
 
-Cloudflare は 2026 年に Tunnel 管理をメイン Cloudflare Dashboard に統合しました。
-
-Public application、webhook、ローカル開発で `cfm` を利用する場合は、次の経路を推奨します。
+Public application、webhook、local development：
 
 ```text
 Networking → Tunnels
 ```
 
-Zero Trust Access、private application、private network が主目的の場合は、Cloudflare One Dashboard でも connector を管理できます。
+Zero Trust / private network：
 
 ```text
 Zero Trust → Networks → Connectors
@@ -139,16 +123,16 @@ Cloudflare 公式アナウンス：
 
 ## Tunnel Token と API Token の違い
 
-| Credential | v0.1 で必要？ | 用途 |
-|---|---:|---|
-| Tunnel Token | ✅ 必要 | 特定の remotely-managed Tunnel connector を実行する |
-| Cloudflare API Token | ❌ 不要 | API から Tunnel、DNS、route などの Cloudflare resource を管理する |
+| Credential | Tunnel Token モード | Account API モード | 用途 |
+|---|---:|---:|---|
+| Tunnel Token | ✅ 必要 | ✅ `cfm` が取得・保存 | 特定の remotely-managed Tunnel connector を実行 |
+| Cloudflare API Token | ❌ 不要 | ✅ 必要 | API から Tunnel / route / optional DNS を管理 |
 
-`cfm` v0.1 は、高権限の Cloudflare API Token を意図的に要求しません。これにより credential の露出を減らし、会社・クライアント間の account isolation を維持します。
+既存 Tunnel を実行するだけなら Tunnel Token モードが最小権限です。
 
 ## Tunnel Token の rotation
 
-Token が漏えいした場合や、開発者のアクセスを削除する場合は Cloudflare で token を rotate します。
+Cloudflare で：
 
 ```text
 Networking
@@ -157,7 +141,11 @@ Networking
 → Rotate token
 ```
 
-新しい connector session では新しい Tunnel Token を使用してください。
+API 管理中の local profile では、raw token を表示せず同期できます：
+
+```bash
+cfm tunnel token company-a project-dev
+```
 
 公式ガイド：
 
@@ -165,15 +153,18 @@ Networking
 
 ## セキュリティ上の注意
 
-- Tunnel Token を Git に commit しないでください。
-- README、`.env.example`、shell script に token を書かないでください。
-- Issue / PR に token を貼り付けないでください。
-- 独立した会社ごとに Tunnel / token の security boundary を分けてください。
-- `cfm` は token file を `~/.config/cloudflare-management/secrets/` に `0600` permission で保存します。
-- `cfm start` は `cloudflared tunnel run --token-file ...` を使用し、raw token を process command line に直接含めません。
+- Tunnel Token を Git に commit しない。
+- README、`.env.example`、shell script に token を書かない。
+- Issue / PR に token を貼り付けない。
+- クライアントごとに security boundary を分ける。
+- Secret file は repository 外に restrictive permission で保存される。
+- `cfm start` は `cloudflared tunnel run --token-file ...` を使用する。
+- Account API Token と Tunnel Token は別々に保存する。
 
 関連ドキュメント：
 
+- [日本語 README](./README.ja.md)
+- [Upgrade guide](./UPGRADING.ja.md)
 - [Security](./SECURITY.md)
 - [Configuration](./CONFIGURATION.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
