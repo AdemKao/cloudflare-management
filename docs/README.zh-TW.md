@@ -17,6 +17,8 @@
 
 ---
 
+> 此繁體中文版與 root `README.md` 使用相同資訊架構；新增功能、安裝、升級、安全與 Quick Start 應同步維護。
+
 ## 為什麼需要這個工具
 
 同時維護多間公司時，通常也會同時面對多個 Cloudflare Account、Domain、Tunnel Token、API Token、localhost port，以及多個 `cloudflared` process。
