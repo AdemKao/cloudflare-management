@@ -56,13 +56,13 @@ cfm add company-a --token-file ~/Downloads/company-a-new.token --force
 For an adopted/provisioned Tunnel managed through API mode, refresh the connector token without printing it:
 
 ```bash
-cfm tunnel token company-a solana-dev
+cfm tunnel token company-a project-dev
 ```
 
 Then restart:
 
 ```bash
-cfm restart solana-dev
+cfm restart project-dev
 ```
 
 ## Account API returns 401
@@ -85,27 +85,38 @@ The replacement credential is verified before it replaces the existing local tok
 
 The token is recognized but lacks permission for the requested resource/action.
 
-Separate the two permission areas:
+Keep the permission areas separate:
 
 ```text
-Tunnel operations → Account-level Tunnel permission
-DNS operations    → Zone-level DNS permission
+Tunnel operations         → Account-level Tunnel permission
+Automatic Zone discovery  → Zone:Zone:Read
+DNS record mutation       → Zone-level DNS write permission
 ```
 
 If you only need Tunnel/route configuration, do not request DNS mutation:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
+```
+
+If DNS mutation is required but you intentionally do not grant `Zone:Zone:Read`, bypass discovery with an explicit Zone ID:
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
 ```
 
 For `cfm expose`, disable DNS when the token intentionally has no DNS permission:
 
 ```bash
 cfm expose company-a \
-  --name solana-dev \
-  --hostname webhook-dev.example.com \
+  --name project-dev \
+  --hostname api-dev.example.com \
   --port 3001 \
   --no-dns
 ```
@@ -121,7 +132,7 @@ Useful commands:
 ```bash
 cfm account show company-a
 cfm tunnel list company-a
-cfm tunnel show company-a solana-dev
+cfm tunnel show company-a project-dev
 ```
 
 A token-only profile does not necessarily have a known remote Tunnel ID until it is explicitly adopted.
@@ -196,15 +207,31 @@ During the first v1 → v2 migration, metadata backup is stored at:
 
 Do not delete or replace the existing Tunnel Token while diagnosing migration problems.
 
-## Route command says a Zone ID is required
+## `cfm route ... --dns` says Zone discovery was denied
 
-DNS automation needs a Zone ID. Either configure one on the Account, pass one explicitly, or avoid DNS mutation.
+Starting with v0.2.1, `cfm` can discover the Zone automatically when neither `--zone-id` nor an account `defaultZoneId` is configured.
+
+The resolution order is:
+
+```text
+1. --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic hostname-based Zone discovery
+```
+
+Automatic discovery calls Cloudflare `GET /zones` and requires `Zone:Zone:Read` for the target Zone. If the token lacks that permission, `cfm` returns an actionable 403 message before changing the Tunnel route.
+
+You have three choices:
+
+1. grant narrowly-scoped `Zone:Zone:Read` for the target Zone;
+2. pass `--zone-id <ZONE_ID>` explicitly;
+3. omit `--dns` and manage DNS separately.
 
 Explicit Zone ID:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns \
   --zone-id <ZONE_ID>
@@ -213,9 +240,31 @@ cfm route add company-a solana-dev \
 Route only:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001
+```
+
+## `cfm route ... --dns` cannot find a matching Zone
+
+`cfm` checks the full hostname and then parent domains. For example:
+
+```text
+api-dev.example.com
+       ↓
+example.com
+```
+
+If no accessible matching Zone is returned, confirm that:
+
+- the hostname belongs to a Zone in the configured Cloudflare Account;
+- the API Token can read that Zone;
+- you are using the intended Account alias.
+
+You can always bypass discovery with:
+
+```bash
+--zone-id <ZONE_ID>
 ```
 
 ## `cfm expose` refuses a token-only profile
@@ -236,8 +285,8 @@ Then re-run `cfm expose`.
 Confirm connector state:
 
 ```bash
-cfm status solana-dev
-cfm logs solana-dev
+cfm status project-dev
+cfm logs project-dev
 ```
 
 Check the local origin directly:
@@ -249,7 +298,7 @@ curl -i http://localhost:3001
 Inspect configured routes:
 
 ```bash
-cfm route list company-a solana-dev
+cfm route list company-a project-dev
 ```
 
 If DNS was expected, verify the hostname resolves to the Tunnel target in the intended Zone.
@@ -278,13 +327,13 @@ Check:
 ```bash
 lsof -i :3001
 curl -i http://localhost:3001
-cfm logs solana-dev
+cfm logs project-dev
 ```
 
 Then compare with:
 
 ```bash
-cfm route list company-a solana-dev
+cfm route list company-a project-dev
 ```
 
 ## Token permission warning
@@ -335,9 +384,9 @@ Suggested sequence:
 
 ```bash
 curl -i http://localhost:3001/webhooks/provider
-cfm status solana-dev
-cfm logs solana-dev
-cfm route list company-a solana-dev
+cfm status project-dev
+cfm logs project-dev
+cfm route list company-a project-dev
 curl -i https://your-dev-hostname.example.com/webhooks/provider
 ```
 
