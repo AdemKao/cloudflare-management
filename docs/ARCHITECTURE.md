@@ -6,11 +6,9 @@
 
 `cloudflare-management` is a thin management layer around Cloudflare's remotely-managed Tunnel APIs and the official `cloudflared` connector.
 
-The main design goal is safe isolation when one development machine works with multiple independent client/company Cloudflare accounts.
+The main design goal is safe isolation when one development machine works with multiple independent client/company Cloudflare Accounts.
 
 ## Resource model
-
-v0.2 uses explicit resource boundaries:
 
 ```text
 Account
@@ -23,24 +21,29 @@ Account
             └── local cloudflared process
 ```
 
-The original v0.1 Tunnel Token workflow remains a supported low-privilege mode.
+The token-only workflow remains a supported low-privilege mode where a Tunnel is intentionally not attached to an Account API credential.
 
-## Components
+## v0.3 component model
 
 ```text
 cfm
 ├── CLI command layer
+│   ├── operational commands
+│   ├── migrate
+│   └── upgrade
 │
 ├── config / migration
-│   ├── schema v2
-│   ├── v1 backup
-│   └── atomic persistence
+│   ├── schema v3
+│   ├── v1/v2 metadata backups
+│   ├── recoverable credential relocation
+│   └── atomic config persistence
 │
-├── secret storage
-│   ├── Account API Tokens
-│   └── Tunnel Tokens
+├── account-scoped credential storage
+│   ├── accounts/<account>/api-token
+│   ├── accounts/<account>/tunnels/*.token
+│   └── legacy/tunnels/*.token
 │
-├── application/resource services
+├── resource services
 │   ├── Accounts
 │   ├── Tunnels
 │   ├── adoption
@@ -49,33 +52,30 @@ cfm
 │   └── expose orchestration
 │
 ├── Cloudflare API adapter
-│   ├── authentication
 │   ├── Tunnel API
-│   ├── remote Tunnel configuration
-│   ├── DNS API
-│   └── normalized errors/timeouts
+│   ├── remote Tunnel config
+│   ├── Zone/DNS API
+│   └── normalized auth/errors/timeouts
+│
+├── installer adapter
+│   ├── npm + GitHub Release/main
+│   └── Homebrew adapter for a future formula
 │
 └── local process manager
-    ├── start / stop / restart
+    ├── cloudflared start / stop / restart
     ├── PID state
     ├── logs
     └── diagnostics
-         │
-         ▼
-    cloudflared
-         │
-         ▼
-  Cloudflare Tunnel
 ```
 
 Cloudflare remains the source of truth for Account/Zone ownership, remote Tunnel objects, remote configuration, DNS, Access policies, and credential issuance/revocation.
 
-## Two credential modes
+## Credential modes and storage boundaries
 
-### Tunnel Token mode
+### Token-only
 
 ```text
-existing Cloudflare Tunnel
+existing remote Tunnel
         │
         ▼
 Tunnel Token
@@ -84,7 +84,7 @@ Tunnel Token
 cfm add <profile>
         │
         ▼
-cloudflared --token-file ...
+legacy/tunnels/<profile>.token
 ```
 
 No Account API Token is required.
@@ -92,184 +92,173 @@ No Account API Token is required.
 ### Account API mode
 
 ```text
-Cloudflare Account API Token
+Cloudflare Account
         │
         ▼
-cfm account add <alias>
-        │
-        ├── Tunnel create/list/show/delete
-        ├── route configuration
-        └── optional DNS mutation
+accounts/<account>/
+├── api-token
+└── tunnels/
+    ├── tunnel-a.token
+    └── tunnel-b.token
 ```
 
-The Account API Token is the higher-privilege credential and is kept separate from Tunnel connector credentials.
+API-managed Tunnel credentials are physically grouped under the Account alias that owns them.
 
 ## Management states
 
-A local Tunnel profile has one of three management states:
-
 ```text
 token-only
-  Existing/manual Tunnel known locally by Tunnel Token.
+  Existing/manual Tunnel known locally by Tunnel Token but not bound to an Account.
 
 adopted
-  Existing/manual Tunnel explicitly attached to an Account alias + Tunnel ID.
+  Existing/manual Tunnel explicitly attached to an Account alias + remote Tunnel ID.
 
 provisioned
   Tunnel created by cfm through Cloudflare API mode.
 ```
 
-This state is important because `cfm` must not infer that a token-only profile should be replaced or duplicated.
+These states prevent `cfm` from silently replacing or duplicating an existing remote Tunnel.
 
-## v1 → v2 migration
+## Schema v3 migration
 
-A v0.1 config may look conceptually like:
+v0.3 migrates v1/v2 directly to v3.
 
-```json
-{
-  "version": 1,
-  "tunnels": {
-    "company-a": {
-      "tokenFile": "~/.config/cloudflare-management/secrets/company-a.token"
-    }
-  }
-}
-```
-
-The migration process is:
+Conceptual v0.2 storage:
 
 ```text
-read v1 config
-      │
-      ├── create metadata backup
-      ├── preserve profile name
-      ├── preserve existing tokenFile path/value
-      │
-      ▼
-write schema v2 atomically
-      │
-      ▼
-company-a = token-only
+secrets/
+├── company-a.token
+├── accounts/company-a.api-token
+└── tunnels/project-dev.token
 ```
 
-Resulting logical metadata:
+v0.3 target:
 
-```json
-{
-  "version": 2,
-  "accounts": {},
-  "tunnels": {
-    "company-a": {
-      "managementMode": "token-only",
-      "account": null,
-      "tunnelId": null,
-      "tokenFile": "~/.config/cloudflare-management/secrets/company-a.token"
-    }
-  }
-}
+```text
+accounts/company-a/
+├── api-token
+└── tunnels/project-dev.token
+
+legacy/tunnels/company-a.token
 ```
 
-Migration is idempotent. Existing secret files are not moved merely to normalize directory structure.
+Flow:
+
+```text
+read v1/v2 metadata
+      │
+      ├── validate aliases/paths
+      ├── compute relocation plan
+      ├── reject conflicting destination secrets
+      ├── create version-specific metadata backup
+      ├── move credentials
+      ├── recover if a previous move already completed
+      │
+      ▼
+atomic schema-v3 config write
+      │
+      ▼
+cleanup empty old secret directories
+```
+
+### Migration invariants
+
+- credential values are preserved;
+- Account/profile aliases are preserved;
+- a destination with different bytes is never overwritten;
+- source-missing + destination-existing is treated as a recoverable partial migration;
+- config replacement is atomic;
+- running migration again after success is a no-op;
+- token-only profiles stay unbound under `legacy/tunnels/`.
+
+Preview:
+
+```bash
+cfm migrate --dry-run
+```
 
 ## Alias namespaces
 
-Account aliases and Tunnel/profile aliases are separate namespaces.
-
-This is valid:
+Account aliases and Tunnel/profile aliases are separate namespaces, so this is valid:
 
 ```bash
 cfm add company-a
 cfm account add company-a
 ```
 
-Internally:
-
-```text
-accounts["company-a"]
-tunnels["company-a"]
-```
-
-They represent different resources.
+Internally they are separate resources until explicit adoption.
 
 ## Adoption
 
-An existing token-only profile can opt into API management:
-
-```bash
-cfm account add company-a
-cfm tunnel adopt company-a company-a
-```
-
-Flow:
-
 ```text
 token-only profile
+legacy/tunnels/company-a.token
       │
-      ├── verify Account credential
-      ├── resolve existing remote Tunnel
+      ├── validate Account API credential
+      ├── resolve exact remote Tunnel
       ├── reject duplicate local attachment
-      ├── preserve current Tunnel Token file
+      ├── safely move existing Token file
       │
       ▼
 adopted profile
+accounts/company-a/tunnels/company-a.token
 ```
 
-When remote name matching is not unique, use an explicit Tunnel ID:
-
-```bash
-cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
-```
-
-Adoption never creates a remote Tunnel.
+Adoption preserves the Token value and never creates a remote Tunnel.
 
 ## Tunnel provisioning
 
 ```text
 cfm tunnel create <account> <name>
         │
-        ├── ensure local profile name is unused
-        ├── Cloudflare create remotely-managed Tunnel
+        ├── ensure local name is unused
+        ├── create remotely-managed Tunnel
         ├── retrieve Tunnel Token
-        ├── store token with mode 0600
-        ├── persist Tunnel ID + Account alias
+        ├── write accounts/<account>/tunnels/<name>.token
+        ├── persist Account alias + Tunnel ID
         │
         ▼
 provisioned profile
 ```
 
-If token retrieval/local persistence fails, the create flow attempts to roll back the newly-created remote Tunnel.
+If token retrieval/local persistence fails, the create flow attempts to roll back the newly created remote Tunnel.
 
 ## Route and DNS model
 
-A route maps a published hostname to an origin:
-
 ```text
-webhook-dev.example.com
-          │
-          ▼
+api-dev.example.com
+        │
+        ▼
 http://localhost:3001
 ```
 
-`cfm route add` updates the remotely-managed Tunnel ingress configuration and preserves a catch-all rule.
-
-DNS is optional:
+`cfm route add` updates the remote Tunnel ingress config. DNS is optional:
 
 ```bash
-cfm route add ...                # route only
-cfm route add ... --dns          # route + DNS CNAME
+cfm route add ...
+cfm route add ... --dns
 ```
 
-A default Zone ID may be attached to an Account alias or overridden per command.
+Zone selection:
+
+```text
+explicit --zone-id
+      ↓
+account defaultZoneId
+      ↓
+hostname-based discovery
+```
+
+Tunnel permission, Zone Read, and DNS Edit are intentionally diagnosed as separate capabilities.
 
 ## `cfm expose` orchestration
 
 ```text
 cfm expose <account> --name <tunnel> --hostname <host> --port <port>
         │
-        ├── load Account
-        ├── reuse adopted/provisioned profile when present
-        ├── create a Tunnel only if no local profile exists
-        ├── refuse silent use of token-only profiles
+        ├── reuse adopted/provisioned profile
+        ├── create only when no local profile exists
+        ├── refuse silent token-only adoption
         ├── configure route
         ├── configure DNS unless --no-dns
         ├── start connector unless --no-start
@@ -278,60 +267,53 @@ cfm expose <account> --name <tunnel> --hostname <host> --port <port>
 public URL/status
 ```
 
-If a new Tunnel was created by this convenience flow and route/DNS provisioning fails, `cfm` attempts to roll back that newly-created Tunnel. If only local connector startup fails, already-provisioned remote resources are retained for diagnosis/retry.
+## Self-upgrade architecture
 
-## Local storage
+`cfm upgrade` is separated from resource/config logic by an installer abstraction.
+
+Current stable npm/GitHub path:
 
 ```text
-~/.config/cloudflare-management/
-├── config.json
-├── config.v1.backup.json        # created only when migrating v1
-└── secrets/
-    ├── company-a.token          # existing/token-only path can remain here
-    ├── accounts/
-    │   ├── company-a.api-token
-    │   └── company-b.api-token
-    └── tunnels/
-        ├── solana-dev.token
-        └── webhook-dev.token
+cfm upgrade
+    │
+    ├── detect npm-managed global install
+    ├── GET latest GitHub Release metadata
+    ├── build npm argument array pinned to vX.Y.Z
+    ├── preview/perform current storage migration
+    ├── npm install -g github:...#vX.Y.Z
+    └── invoke new `cfm migrate`
+```
 
+The updater uses `spawn`/`execFile` argument arrays with `shell: false`; it does not build a shell command from user-controlled strings.
+
+Unknown/manual/development installs are not guessed. They receive a manual update command instead of automatic replacement.
+
+A Homebrew adapter is present so a future formula can use `brew upgrade cloudflare-management`; the adapter does not imply a formula is currently published.
+
+## Runtime state
+
+Credential storage is config-scoped; process state remains separate:
+
+```text
 ~/.local/state/cloudflare-management/
 ├── logs/
 └── runtime/
 ```
 
-`XDG_CONFIG_HOME` and `XDG_STATE_HOME` are respected.
-
-## Process lifecycle
-
-```text
-cfm start <profile>
-        │
-        ├── validate local profile
-        ├── validate token file
-        ├── validate cloudflared exists
-        ├── detect existing PID
-        │
-        ▼
-cloudflared tunnel run --token-file <path>
-        │
-        ├── detached process
-        ├── runtime PID metadata
-        └── connector log
-```
-
-The API layer is not involved when an existing local connector is simply started/stopped.
+A credential relocation does not change the profile alias used by `start`, `status`, or `logs`.
 
 ## Architecture rules
 
-- Account API mode is optional.
-- Existing v0.1 connector commands remain supported.
-- API Tokens and Tunnel Tokens are separate secret types.
-- Raw secrets are not stored in config metadata or normal command output.
-- One unrestricted credential must not be shared across unrelated clients.
+- Account API mode remains optional.
+- Existing connector/profile aliases remain backward compatible.
+- API Tokens and Tunnel Tokens are separate credential types.
+- API-managed Tunnel credentials belong to exactly one Account storage boundary.
+- Token-only profiles remain unbound until explicit adoption.
+- Raw credentials are not stored in metadata or normal command output.
+- Migration never overwrites a different destination credential.
 - Remote destructive operations require explicit confirmation.
-- Token-only profiles are never silently adopted.
+- DNS automation is optional and separately authorized.
+- Self-update does not shell-interpolate commands or guess unknown installs.
 - `cfm` does not implement the Tunnel protocol; `cloudflared` remains responsible for connectivity.
-- DNS automation is optional and requires explicit permission.
 
-See [Security](./SECURITY.md), [Command Reference](./COMMANDS.md), and [v0.2 API Management](./V0.2_API_MANAGEMENT.md).
+See [Configuration](./CONFIGURATION.md), [Security](./SECURITY.md), [Command Reference](./COMMANDS.md), and [Upgrading](./UPGRADING.en.md).
