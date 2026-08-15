@@ -41,22 +41,41 @@ Account
 
 The existing v0.1 Tunnel Token workflow remains supported. Account API mode is optional.
 
+A user who already ran:
+
+```bash
+cfm add company-a
+```
+
+must be able to upgrade without re-adding the profile, re-entering the Tunnel Token, creating another Tunnel, or providing an Account API Token.
+
 See [v0.2 API Management Design](./V0.2_API_MANAGEMENT.md) for the detailed proposal.
 
-### Phase 1 — Account API foundation
+### Phase 1 — Account API foundation and safe v1 migration
 
 - [ ] config schema v2 with backward-compatible v1 migration;
+- [ ] back up config metadata before the first migration write;
+- [ ] migrate existing v1 profiles as `token-only` records;
+- [ ] preserve existing profile names and Tunnel Token file paths;
+- [ ] keep existing `cfm add/start/stop/restart/status/logs/doctor` behavior unchanged;
+- [ ] make migration atomic, recoverable, and idempotent;
 - [ ] separate secure Account API Token storage;
 - [ ] `cfm account add/list/show/remove/doctor`;
+- [ ] allow Account aliases and existing Tunnel/profile aliases to use the same friendly name because they are different resource namespaces;
 - [ ] small Cloudflare API adapter with normalized timeouts/errors;
 - [ ] validate Account ID and API Token during setup;
-- [ ] unit tests for migration and credential handling.
+- [ ] unit tests for migration, recovery, backward compatibility, and credential handling.
 
-### Phase 2 — Tunnel provisioning
+### Phase 2 — Tunnel provisioning and adoption
 
 - [ ] `cfm tunnel list <account>`;
 - [ ] `cfm tunnel create <account> <name>`;
 - [ ] persist returned Tunnel ID and Tunnel Token securely;
+- [ ] `cfm tunnel adopt <account> <existing-profile> [--tunnel-id <id>]`;
+- [ ] adoption supports an interactive remote Tunnel selection;
+- [ ] adoption must never create a duplicate Tunnel;
+- [ ] adoption preserves the existing Tunnel Token by default;
+- [ ] distinguish `token-only`, `adopted`, and `provisioned` Tunnel records;
 - [ ] `cfm tunnel show`;
 - [ ] `cfm tunnel token`;
 - [ ] safe `cfm tunnel delete` with explicit confirmation;
@@ -67,7 +86,7 @@ See [v0.2 API Management Design](./V0.2_API_MANAGEMENT.md) for the detailed prop
 - [ ] remote Tunnel hostname → origin configuration;
 - [ ] `cfm route list/add/remove`;
 - [ ] optional DNS record provisioning when Zone DNS permission is available;
-- [ ] allow Tunnel creation without DNS privileges;
+- [ ] allow Tunnel creation/adoption without DNS privileges;
 - [ ] hostname and origin validation.
 
 ### Phase 4 — Convenience workflow
@@ -85,13 +104,15 @@ Potential flow:
 
 ```text
 Account validation
-  → Tunnel creation
-  → Tunnel Token storage
+  → choose an existing adopted/provisioned Tunnel OR explicitly create one
+  → Tunnel Token storage/retention
   → route configuration
   → optional DNS provisioning
   → connector startup
   → public URL/status output
 ```
+
+`cfm expose` must not silently create another Tunnel when a compatible existing profile already exists.
 
 ## v0.2 security constraints
 
@@ -112,6 +133,8 @@ Zone → DNS → Edit
 The CLI should not require `All accounts`, `All zones`, or one shared unrestricted token across unrelated companies.
 
 Tunnel Token-only users should never be forced to provide an Account-level API Token.
+
+An existing token-only profile should never become API-managed automatically. Adoption requires explicit user action and explicit selection of the matching remote Tunnel.
 
 ## Near-term developer experience candidates
 
@@ -166,7 +189,9 @@ Potential improvements:
 - release documentation;
 - translated command/reference docs where useful;
 - webhook development examples;
-- Account API Token setup guide for v0.2.
+- Account API Token setup guide for v0.2;
+- upgrade guide for users who already ran `cfm add <profile>`;
+- adoption guide for attaching an existing remote Tunnel without duplication.
 
 ## Non-goals
 
@@ -177,6 +202,8 @@ The project does not aim to:
 - become a full Cloudflare account administration dashboard;
 - centralize multiple clients' unrestricted credentials;
 - require API provisioning for the basic Tunnel Token workflow;
+- auto-adopt or silently mutate existing remote Tunnels;
+- create duplicate Tunnels simply because a user upgraded from v0.1;
 - bypass Cloudflare account/security boundaries;
 - prefer Global API Keys over scoped API Tokens.
 
