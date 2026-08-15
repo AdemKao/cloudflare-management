@@ -2,186 +2,212 @@
 
 **English** · [繁體中文](./README.zh-TW.md) · [日本語](./README.ja.md) · [Back to root README](../README.md)
 
-`cloudflare-management` is a small local CLI for managing multiple **remotely-managed Cloudflare Tunnel connectors** across different client/company Cloudflare accounts from one development machine.
+`cloudflare-management` (`cfm`) is a local CLI for managing Cloudflare Tunnel connectors across independent client/company Cloudflare accounts. v0.2 preserves the original Tunnel Token workflow and adds an optional Cloudflare Account API mode for provisioning Tunnels, published hostname routes, and DNS.
 
-The executable command is `cfm`, with `cloudflare-management` available as an alias.
+## Operating modes
 
-## Why
+### Tunnel Token mode
 
-This tool is designed for freelance and multi-client development workflows where one Mac may need to connect several independent Cloudflare accounts without repeatedly running `cloudflared tunnel login`, switching account credentials, or mixing client secrets.
+Use an existing remotely-managed Tunnel with the minimum local credential:
 
-Each client keeps its own remotely-managed Tunnel in its own Cloudflare account. `cfm` only stores that Tunnel's connector token locally and manages the corresponding `cloudflared` process.
+```bash
+cfm add company-a
+cfm start company-a
+```
 
-## Requirements
+No Account API Token is required.
+
+### Account API mode
+
+Create/manage Cloudflare resources from the CLI:
+
+```bash
+cfm account add company-a
+cfm tunnel create company-a solana-dev
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001 \
+  --dns
+cfm start solana-dev
+```
+
+Account API Tokens and Tunnel Tokens are stored separately.
+
+## Requirements and installation
 
 - macOS or Linux
 - Node.js 20+
-- `cloudflared` installed and available in `PATH`
-- A remotely-managed Cloudflare Tunnel already created in each client's Cloudflare dashboard
+- `cloudflared` in `PATH`
 
-On macOS with Homebrew:
+macOS:
 
 ```bash
 brew install cloudflared
 ```
 
-## Install
-
-### Install directly from GitHub
-
-After this feature is merged to `main`:
+Install from `main`:
 
 ```bash
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-Verify the installation:
+Test the v0.2 implementation branch before merge:
+
+```bash
+npm install -g github:AdemKao/cloudflare-management#feat/v0.2-api-management
+```
+
+Verify:
 
 ```bash
 cfm --version
 cfm --help
 ```
 
-### Install the feature branch before merge
+## Existing Tunnel quick start
 
-```bash
-npm install -g github:AdemKao/cloudflare-management#feat/local-cli
-```
-
-### Develop locally
-
-```bash
-git clone https://github.com/AdemKao/cloudflare-management.git
-cd cloudflare-management
-npm link
-```
-
-`cfm` is now globally available while pointing to the local checkout.
-
-To unlink later:
-
-```bash
-npm unlink -g cloudflare-management
-```
-
-## Cloudflare setup
-
-For each company/client:
-
-1. Open that client's Cloudflare account.
-2. Create a **remotely-managed Cloudflare Tunnel** in the dashboard.
-3. Configure the Published Application hostname(s) and localhost service(s) in Cloudflare.
-4. Open the Tunnel and copy its connector token from the **Add a replica** installation command.
-5. Add the token to `cfm`.
-
-Example:
-
-```text
-Company A Cloudflare account
-└── company-a-dev tunnel
-    ├── api-dev.company-a.com     -> http://localhost:3001
-    └── hook-dev.company-a.com    -> http://localhost:3002
-
-Company B Cloudflare account
-└── company-b-dev tunnel
-    └── api-dev.company-b.com     -> http://localhost:4001
-
-Company C Cloudflare account
-└── company-c-dev tunnel
-    ├── app-dev.company-c.com     -> http://localhost:5001
-    └── webhook-dev.company-c.com -> http://localhost:5002
-```
-
-Cloudflare accounts and domains remain isolated. `cfm` only manages local connector processes.
-
-## First-time setup
-
-Initialize local directories:
+Get the connector token from Cloudflare, then:
 
 ```bash
 cfm init
+cfm add company-a
+cfm start company-a
+cfm status company-a
 ```
 
-Add a client/company profile:
+See [Tunnel Token setup](./TUNNEL_TOKEN.en.md) for the Dashboard path and security notes.
+
+## Create a Tunnel from `cfm`
+
+Register a narrowly-scoped Cloudflare Account credential:
 
 ```bash
-cfm add claire
+cfm account add company-a
 ```
 
-The CLI prompts for the Tunnel token without echoing it to the terminal.
-
-Or import a token from an existing local file:
+Non-interactive form:
 
 ```bash
-cfm add client-b --token-file ~/Downloads/client-b.token
+cfm account add company-a \
+  --account-id <ACCOUNT_ID> \
+  --token-file ~/.secrets/company-a-api-token \
+  --zone-id <OPTIONAL_ZONE_ID>
 ```
 
-The token is copied to:
+Create and configure:
+
+```bash
+cfm tunnel create company-a solana-dev
+
+cfm route add company-a solana-dev \
+  --hostname webhook-dev.example.com \
+  --url http://localhost:3001
+```
+
+Add `--dns` only when the API Token has DNS permission for the required Zone.
+
+## One-command expose workflow
+
+```bash
+cfm expose company-a \
+  --name solana-dev \
+  --hostname webhook-dev.example.com \
+  --port 3001
+```
+
+By default this configures DNS and starts the connector. Use `--no-dns` or `--no-start` to disable those steps.
+
+`cfm expose` reuses an `adopted` or `provisioned` profile. It will not silently adopt an existing token-only profile.
+
+## Upgrading an existing v0.1 profile
+
+If you already ran:
+
+```bash
+cfm add company-a
+```
+
+you can upgrade and immediately keep using:
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
+
+The v1 profile is migrated to schema v2 as `token-only`; the existing Tunnel Token path/value is preserved and no Account API Token is required.
+
+To opt into API management later:
+
+```bash
+cfm account add company-a
+cfm tunnel adopt company-a company-a
+```
+
+If automatic name matching is ambiguous:
+
+```bash
+cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
+```
+
+Adoption does not create a duplicate Tunnel or replace the existing Tunnel Token by default.
+
+## Management states
 
 ```text
-~/.config/cloudflare-management/secrets/<name>.token
+token-only   existing/manual Tunnel; local Tunnel Token known
+adopted      existing/manual Tunnel explicitly attached to Account + Tunnel ID
+provisioned  Tunnel created by cfm through Cloudflare API mode
 ```
-
-The token file is stored with mode `600`.
 
 ## Commands
 
 ```bash
-# Add/remove local tunnel profiles
-cfm add claire
-cfm remove claire
-
-# View configured profiles and process state
+# Local/token-only workflow
+cfm add company-a
 cfm list
+cfm start company-a
+cfm stop company-a
+cfm restart company-a
 cfm status
-cfm status claire
+cfm logs company-a --follow
+cfm doctor company-a
 
-# Start/stop one client tunnel
-cfm start claire
-cfm stop claire
-cfm restart claire
+# Accounts
+cfm account add company-a
+cfm account list
+cfm account show company-a
+cfm account doctor company-a
+cfm account remove company-a --yes
 
-# Start/stop every configured client tunnel
-cfm start-all
-cfm stop-all
+# Tunnels
+cfm tunnel list company-a
+cfm tunnel create company-a solana-dev
+cfm tunnel adopt company-a company-a
+cfm tunnel show company-a solana-dev
+cfm tunnel token company-a solana-dev
+cfm tunnel delete company-a solana-dev --yes
 
-# Logs
-cfm logs claire
-cfm logs claire --follow
-
-# Diagnostics
-cfm doctor
-cfm doctor claire
-
-# Show config file location
-cfm config
+# Routes
+cfm route list company-a solana-dev
+cfm route add company-a solana-dev --hostname webhook-dev.example.com --url http://localhost:3001
+cfm route remove company-a solana-dev --hostname webhook-dev.example.com
 ```
 
-Example:
+Read [Command Reference](./COMMANDS.md) for all options.
+
+## Local data and security
 
 ```text
-$ cfm status
-NAME       STATUS   PID
-claire     running  91231
-client-b   stopped  -
-client-c   running  91402
+~/.config/cloudflare-management/
+├── config.json
+└── secrets/
+    ├── company-a.token
+    ├── accounts/
+    │   └── company-a.api-token
+    └── tunnels/
+        └── solana-dev.token
 ```
-
-## Local files
-
-Configuration:
-
-```text
-~/.config/cloudflare-management/config.json
-```
-
-Tunnel tokens:
-
-```text
-~/.config/cloudflare-management/secrets/
-```
-
-Runtime state and logs:
 
 ```text
 ~/.local/state/cloudflare-management/
@@ -189,46 +215,32 @@ Runtime state and logs:
 └── runtime/
 ```
 
-`XDG_CONFIG_HOME` and `XDG_STATE_HOME` are respected when set.
+- raw credentials are not stored in `config.json`;
+- secret files use mode `0600`;
+- API Tokens and Tunnel Tokens are separate;
+- normal commands do not print raw tokens;
+- `cloudflared` is launched with `--token-file`;
+- remote Tunnel deletion requires confirmation or `--yes`;
+- use specific Account/Zone scopes instead of unrestricted cross-client credentials.
 
-## Security model
+See [Security](./SECURITY.md).
 
-- Tunnel tokens are **never stored in this Git repository**.
-- Tokens are stored in local files with mode `600`.
-- `cfm start` uses `cloudflared tunnel run --token-file ...`, so the token itself is not placed in the process command line.
-- Use one remotely-managed Tunnel per client/security boundary when clients use separate Cloudflare accounts.
-- A Cloudflare Tunnel token is a sensitive credential. Rotate or revoke it in Cloudflare when access should be removed.
+## Documentation
 
-## Scope of v0.1
-
-This version deliberately does **not** request a high-privilege Cloudflare API token and does not create DNS/routes automatically.
-
-Cloudflare Dashboard owns:
-
-- Tunnel creation
-- Published Application routes
-- DNS/domain configuration
-- Token rotation/revocation
-
-`cfm` owns:
-
-- Local token storage
-- Starting/stopping local `cloudflared` connectors
-- Status
-- Logs
-- Diagnostics
-
-A future version can optionally add Cloudflare API integration if managing routes manually becomes a bottleneck.
+- [Tunnel Token guide](./TUNNEL_TOKEN.en.md)
+- [Architecture](./ARCHITECTURE.md)
+- [v0.2 API Management](./V0.2_API_MANAGEMENT.md)
+- [Command Reference](./COMMANDS.md)
+- [Configuration](./CONFIGURATION.md)
+- [Security](./SECURITY.md)
+- [Troubleshooting](./TROUBLESHOOTING.md)
+- [Roadmap](./ROADMAP.md)
 
 ## Development
 
 ```bash
+git clone https://github.com/AdemKao/cloudflare-management.git
+cd cloudflare-management
+npm link
 npm run check
 ```
-
-This runs syntax checks and the Node test suite.
-
-## Additional documentation
-
-- [Architecture](./ARCHITECTURE.md)
-- [Security](./SECURITY.md)
