@@ -335,6 +335,7 @@ Read [Security](./docs/SECURITY.md) for the full model.
 - [Security](./docs/SECURITY.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
 - [Roadmap](./docs/ROADMAP.md)
+- [Changelog](./CHANGELOG.md)
 
 ## Development
 
