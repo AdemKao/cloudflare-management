@@ -17,9 +17,11 @@ A lightweight CLI for developers, freelancers, and consultants who work with mul
 
 ---
 
+> This localized guide follows the same information architecture as the root README so install, upgrade, security, and Quick Start content stay synchronized.
+
 ## Why this exists
 
-Working with several companies often means several Cloudflare Accounts, domains, Tunnel tokens, API credentials, localhost ports, and connector processes.
+Working with several companies often means several Cloudflare Accounts, domains, Tunnel Tokens, API credentials, localhost ports, and connector processes.
 
 `cfm` keeps those security boundaries separate while giving you one local workflow:
 
@@ -52,7 +54,7 @@ cfm add company-a
 cfm start company-a
 ```
 
-Use this when the remotely-managed Tunnel already exists. No Account API Token is required.
+No Account API Token is required. In v0.3, unbound token-only profiles live under `legacy/tunnels/` until explicit adoption.
 
 ### 2. Account API mode — optional provisioning
 
@@ -66,30 +68,29 @@ cfm route add company-a project-dev \
 cfm start project-dev
 ```
 
-Account API Tokens and Tunnel Tokens are stored separately.
+Account API Tokens and Tunnel Tokens are stored separately and grouped under the owning Account directory.
 
 ## Highlights
 
-- multi-account isolation;
-- backward compatibility for existing `cfm add <profile>` users;
-- safe v1 → v2 config migration;
-- explicit Tunnel adoption without duplication;
-- Tunnel provisioning and remote configuration;
-- optional DNS automation;
-- automatic Cloudflare Zone discovery from the hostname when `--dns` is used without a Zone ID;
-- permission-aware diagnostics for Tunnel vs Zone/DNS access;
-- Cloudflare error code `10000` handling even when HTTP status is 200;
-- one-command `cfm expose` workflow;
-- mode-`0600` secret files;
-- raw Tunnel Tokens kept out of process args;
-- diagnostics, status, and logs;
-- no runtime npm dependencies.
+- **Multi-account isolation** with one local credential boundary per Account.
+- **Account-scoped storage** under `accounts/<account>/`.
+- **Backward compatibility** for v0.1/v0.2 profile aliases.
+- **Safe schema v3 migration** with backups, recovery, and conflict protection.
+- **Migration preview** through `cfm migrate --dry-run`.
+- **Self-upgrade** through `cfm upgrade` starting in v0.3.
+- **Installer abstraction** for the current npm/GitHub distribution and future Homebrew formula support.
+- **Explicit adoption** without creating duplicate remote Tunnels.
+- **Tunnel provisioning**, hostname routes, optional DNS automation, and Zone discovery.
+- **Permission-aware diagnostics** for Tunnel vs Zone/DNS access.
+- **One-command `cfm expose`** workflow.
+- **Mode-`0600` credentials** and no raw Tunnel Token in process args.
+- **No runtime npm dependencies**.
 
 ## Requirements
 
 - macOS or Linux
 - Node.js 20+
-- `cloudflared` available in `PATH`
+- `cloudflared` in `PATH`
 - Cloudflare access appropriate to the selected mode
 
 macOS:
@@ -106,10 +107,10 @@ Latest from `main`:
 npm install -g github:AdemKao/cloudflare-management
 ```
 
-Specific release:
+v0.3.0 release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 ```
 
 Verify:
@@ -119,25 +120,86 @@ cfm --version
 cfm --help
 ```
 
+> Homebrew distribution is planned. The v0.3 updater includes a Homebrew adapter, but that does not mean a formula/tap is already published.
+
 ## Update
 
-Reinstall from `main` to update a GitHub-installed copy:
+### Bootstrap once from v0.2.x
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management
+npm install -g github:AdemKao/cloudflare-management#v0.3.0
 cfm --version
+cfm migrate --dry-run
+cfm migrate
 ```
 
-Or pin a release:
+### v0.3 and later
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.2
-cfm --version
+cfm upgrade
 ```
 
-Local profiles and credentials are stored outside the npm package directory, so reinstalling the CLI does not remove them. v0.1 → v0.2 migration automatically backs up v1 metadata, preserves Tunnel Token paths, and converts existing profiles to `token-only`.
+Preview:
 
-Read [Upgrading](./UPGRADING.en.md) before updating important development machines.
+```bash
+cfm upgrade --dry-run
+```
+
+Non-interactive confirmation:
+
+```bash
+cfm upgrade --yes
+```
+
+Development channel:
+
+```bash
+cfm upgrade --channel main
+```
+
+For the current npm/GitHub distribution, the stable channel resolves and installs the latest GitHub Release tag. The updater uses argument arrays instead of shell interpolation and invokes `cfm migrate` after a successful package update.
+
+Read [Upgrading](./UPGRADING.en.md) before changing an important development machine.
+
+## v0.3 account-scoped storage
+
+```text
+~/.config/cloudflare-management/
+├── config.json
+├── backups/
+│   ├── config.v1.backup.json
+│   └── config.v2.backup.json
+├── accounts/
+│   ├── company-a/
+│   │   ├── api-token
+│   │   └── tunnels/
+│   │       └── project-dev.token
+│   └── company-b/
+│       ├── api-token
+│       └── tunnels/
+└── legacy/
+    └── tunnels/
+        └── unbound-profile.token
+```
+
+API-managed Tunnel credentials live under the Account that owns them. Unbound token-only profiles remain in `legacy/tunnels/`.
+
+## Safe migration from v0.1 / v0.2
+
+```bash
+cfm migrate --dry-run
+cfm migrate
+```
+
+Migration preserves aliases and credential values while changing file paths. It writes a version-specific metadata backup before replacing the old config, can recover after a partial relocation, and refuses to overwrite a destination credential whose contents differ.
+
+Existing profile commands remain unchanged:
+
+```bash
+cfm start company-a
+cfm status company-a
+cfm logs company-a
+```
 
 ## Quick start: existing Tunnel
 
@@ -148,6 +210,12 @@ cfm start company-a
 cfm status company-a
 ```
 
+Token-only credential:
+
+```text
+legacy/tunnels/company-a.token
+```
+
 See [Tunnel Token setup](./TUNNEL_TOKEN.en.md).
 
 ## Quick start: create a Tunnel from the CLI
@@ -155,13 +223,26 @@ See [Tunnel Token setup](./TUNNEL_TOKEN.en.md).
 ```bash
 cfm account add company-a
 cfm tunnel create company-a project-dev
+```
+
+Storage becomes:
+
+```text
+accounts/company-a/
+├── api-token
+└── tunnels/
+    └── project-dev.token
+```
+
+Route only:
+
+```bash
 cfm route add company-a project-dev \
   --hostname api-dev.example.com \
   --url http://localhost:3001
-cfm start project-dev
 ```
 
-Use `--dns` when the API Token also has DNS write permission for the target Zone:
+Route plus DNS:
 
 ```bash
 cfm route add company-a project-dev \
@@ -170,46 +251,54 @@ cfm route add company-a project-dev \
   --dns
 ```
 
-With `--dns`, Zone selection follows this order:
+Zone resolution order:
 
 ```text
 1. --zone-id <ZONE_ID>
 2. account defaultZoneId
-3. automatic discovery from the hostname
+3. hostname-based discovery
 ```
 
-Automatic discovery walks from the full hostname toward parent domains, for example `api-dev.example.com` → `example.com`, and calls Cloudflare `GET /zones`. It therefore requires Zone read access for the target Zone. DNS record creation/update separately requires DNS edit access. If you do not want to grant Zone Read, pass `--zone-id <ZONE_ID>` explicitly.
-
-Cloudflare may return `success: false` with error code `10000` (`Authentication error`) while the HTTP response is still 200. v0.2.2 recognizes this as an authentication/authorization failure and prints stage-specific Zone/DNS guidance.
+Automatic discovery requires Zone Read; DNS mutation separately requires DNS Edit/Write.
 
 ### Permission diagnostics
-
-`cfm account doctor company-a` validates Tunnel API access only:
 
 ```bash
 cfm account doctor company-a
 ```
 
-To also validate Zone discovery and DNS-read access for a hostname without changing DNS:
+Basic doctor checks Tunnel API access only. Add a hostname to check Zone discovery and DNS read without mutating DNS:
 
 ```bash
 cfm account doctor company-a \
   --hostname api-dev.example.com
 ```
 
-Or bypass Zone discovery with a known ID:
+A successful read-only doctor does not prove DNS write access.
+
+## Adopt an existing token-only Tunnel
 
 ```bash
-cfm account doctor company-a \
-  --hostname api-dev.example.com \
-  --zone-id <ZONE_ID>
+cfm account add company-a
+cfm tunnel adopt company-a company-a \
+  --tunnel-id <TUNNEL_UUID>
 ```
 
-A successful doctor does not mutate DNS and therefore does not prove DNS write permission. Route DNS automation still requires DNS edit access for the target Zone.
+Adoption preserves the Token value and moves it from:
+
+```text
+legacy/tunnels/company-a.token
+```
+
+to:
+
+```text
+accounts/company-a/tunnels/company-a.token
+```
+
+It does not create another remote Tunnel.
 
 ## One-command expose workflow
-
-`cfm expose` uses the same Zone selection rules, so a default Zone ID is no longer mandatory when the token can discover the target Zone:
 
 ```bash
 cfm expose company-a \
@@ -218,37 +307,13 @@ cfm expose company-a \
   --port 3001
 ```
 
-By default, `cfm expose` configures DNS and starts the connector. Use `--no-dns` or `--no-start` to disable those steps. Token-only profiles are never silently adopted.
-
-## Existing v0.1 users
-
-If you previously ran:
-
-```bash
-cfm add company-a
-```
-
-upgrading does not require re-entering the Tunnel Token or adding an Account API Token:
-
-```bash
-cfm start company-a
-cfm status company-a
-cfm logs company-a
-```
-
-To opt into API management later:
-
-```bash
-cfm account add company-a
-cfm tunnel adopt company-a company-a --tunnel-id <TUNNEL_UUID>
-```
-
-Adoption does not create another Tunnel or replace the existing Tunnel Token by default.
+`cfm expose` reuses or creates a managed Tunnel, configures route/DNS, starts `cloudflared` unless disabled, and prints the public URL. It never silently adopts a token-only profile.
 
 ## Command overview
 
 | Area | Commands |
 | --- | --- |
+| Lifecycle | `migrate`, `upgrade` |
 | Local profiles | `init`, `add`, `remove`, `list` |
 | Connector process | `start`, `stop`, `restart`, `start-all`, `stop-all`, `status`, `logs`, `doctor` |
 | Accounts | `account add/list/show/doctor/remove` |
@@ -260,25 +325,15 @@ See [Command Reference](./COMMANDS.md).
 
 ## Security model
 
-```text
-~/.config/cloudflare-management/
-├── config.json
-└── secrets/
-    ├── company-a.token
-    ├── accounts/
-    │   └── company-a.api-token
-    └── tunnels/
-        └── project-dev.token
-```
-
-- API Tokens and Tunnel Tokens are distinct credentials.
-- Secret files use `0600` permissions.
-- Raw credentials are not stored in `config.json`.
-- Normal commands do not print raw tokens.
+- Account API Tokens and Tunnel Tokens are separate credentials.
+- API-managed credentials are grouped by Account.
+- Token-only profiles remain under `legacy/tunnels/` until adoption.
+- Credential files use mode `0600`.
+- Raw credentials are not stored in `config.json` or printed normally.
+- Migration never overwrites a different destination credential.
 - Remote Tunnel deletion requires confirmation or `--yes`.
-- Prefer specific Account/Zone scopes over broad cross-client credentials.
-- Grant Zone Read only if you want automatic Zone discovery; otherwise provide an explicit/default Zone ID.
-- Tunnel API checks succeeding does not imply DNS edit access exists.
+- `cfm upgrade` does not use shell interpolation and does not guess unknown/development installs.
+- Prefer narrow Account/Zone scopes.
 
 See [Security](./SECURITY.md).
 
@@ -290,7 +345,6 @@ See [Security](./SECURITY.md).
 - [Upgrade guide](./UPGRADING.en.md)
 - [Tunnel Token guide](./TUNNEL_TOKEN.en.md)
 - [Architecture](./ARCHITECTURE.md)
-- [v0.2 API Design](./V0.2_API_MANAGEMENT.md)
 - [Command Reference](./COMMANDS.md)
 - [Configuration](./CONFIGURATION.md)
 - [Security](./SECURITY.md)
