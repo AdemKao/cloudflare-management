@@ -18,16 +18,16 @@ The repository root [README](../README.md) is the primary English project landin
 - [Tunnel Token — English](./TUNNEL_TOKEN.en.md)
 - [Tunnel Token — 繁體中文](./TUNNEL_TOKEN.zh-TW.md)
 - [Tunnel Token — 日本語](./TUNNEL_TOKEN.ja.md)
-- [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, and `expose` commands.
+- [Command Reference](./COMMANDS.md) — token-only, Account, Tunnel, Route, DNS Zone auto-discovery, and `expose` commands.
 - [Changelog](../CHANGELOG.md) — version-by-version user-facing changes and upgrade notes.
 
 ## Architecture and operations
 
 - [Architecture](./ARCHITECTURE.md) — schema v2, Account → Tunnel → Route → Connector boundaries, migration, adoption, and process lifecycle.
 - [v0.2 API Management](./V0.2_API_MANAGEMENT.md) — design decisions and implementation phases tracked by Issue #3.
-- [Security](./SECURITY.md) — Account API Token vs Tunnel Token handling, least privilege, rotation, deletion, and offboarding.
-- [Configuration](./CONFIGURATION.md) — config, secrets, state, logs, and XDG paths.
-- [Troubleshooting](./TROUBLESHOOTING.md) — common tunnel, localhost, token, API, and hostname failures.
+- [Security](./SECURITY.md) — Account API Token vs Tunnel Token handling, least privilege, Zone discovery permission, rotation, deletion, and offboarding.
+- [Configuration](./CONFIGURATION.md) — config, secrets, state, logs, XDG paths, default Zone ID, and hostname-based Zone discovery.
+- [Troubleshooting](./TROUBLESHOOTING.md) — common tunnel, localhost, token, API, DNS Zone discovery, and hostname failures.
 - [Roadmap](./ROADMAP.md) — completed phases and future work.
 - [Contributing](../CONTRIBUTING.md) — development workflow and contribution guidelines.
 
@@ -42,7 +42,7 @@ npm install -g github:AdemKao/cloudflare-management
 Specific release:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 ## Update
