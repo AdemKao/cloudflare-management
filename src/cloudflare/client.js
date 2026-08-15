@@ -104,6 +104,16 @@ export class CloudflareClient {
     return this.request('PUT', `/accounts/${this.accountId}/cfd_tunnel/${encodeURIComponent(tunnelId)}/configurations`, { config });
   }
 
+  async listZones({ name, perPage = 50 } = {}) {
+    const params = new URLSearchParams();
+    if (name) params.set('name', name);
+    const normalizedPerPage = Math.min(50, Math.max(5, Number(perPage) || 50));
+    params.set('per_page', String(normalizedPerPage));
+    const zones = await this.request('GET', `/zones?${params.toString()}`);
+    if (!Array.isArray(zones)) return [];
+    return zones.filter((zone) => !zone?.account?.id || zone.account.id === this.accountId);
+  }
+
   async listDnsRecords(zoneId, { name, type } = {}) {
     const params = new URLSearchParams();
     if (name) params.set('name', name);

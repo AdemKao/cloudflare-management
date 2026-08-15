@@ -83,6 +83,7 @@ Account API Token 與 Tunnel Token 會分開保存。
 - **Tunnel Provisioning** — 支援 list/create/show/delete remotely-managed Tunnel。
 - **Published Hostname 管理** — 設定 hostname → origin 規則。
 - **可選 DNS 自動化** — 只有在明確要求且 API Token 有權限時才建立/移除 CNAME。
+- **自動 Zone 判斷** — 使用 `--dns` 且沒有提供 Zone ID 時，`cfm` 可以從 hostname 自動找出對應 Cloudflare Zone。
 - **一條指令公開服務** — `cfm expose` 可組合 Tunnel + route + DNS + connector startup。
 - **Secret 保護** — Token 保存於 repo 外，檔案權限為 `0600`。
 - **Process args 不放 raw Tunnel Token** — 使用 `cloudflared tunnel run --token-file ...`。
@@ -113,7 +114,7 @@ npm install -g github:AdemKao/cloudflare-management
 安裝指定 release tag：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 確認安裝：
@@ -135,7 +136,7 @@ cfm --version
 如果要鎖定指定 release：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
@@ -198,6 +199,32 @@ cfm route add company-a project-dev \
   --dns
 ```
 
+使用 `--dns` 時，Zone ID 的判斷順序如下：
+
+```text
+1. 指令上的 --zone-id <ZONE_ID>
+2. Account 的 defaultZoneId
+3. 從 hostname 自動尋找對應 Zone
+```
+
+自動尋找會從完整 hostname 往上找 parent domain，例如：
+
+```text
+api-dev.example.com
+       ↓
+example.com
+```
+
+這個自動尋找流程會呼叫 Cloudflare `GET /zones`，因此 API Token 需要目標 Zone 的 `Zone:Zone:Read`。建立或更新 DNS record 仍然需要對應的 DNS write 權限。如果你刻意不想給 Zone Read，就直接使用：
+
+```bash
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
+  --url http://localhost:3001 \
+  --dns \
+  --zone-id <ZONE_ID>
+```
+
 最後啟動 connector：
 
 ```bash
@@ -206,7 +233,7 @@ cfm start project-dev
 
 ## 一條指令公開服務：`cfm expose`
 
-Account 已設定 default Zone ID 時，可以直接：
+`cfm expose` 也使用相同的 Zone 判斷規則，因此 API Token 可以自動查 Zone 時，不再要求一定要先設定 default Zone ID：
 
 ```bash
 cfm expose company-a \
@@ -224,6 +251,8 @@ cfm expose company-a \
 如果沒有 local profile 才建立新的 Tunnel
        ↓
 設定 hostname → origin
+       ↓
+判斷 Zone ID（explicit / default / auto-discovery）
        ↓
 除非 --no-dns，否則管理 DNS
        ↓
@@ -319,6 +348,7 @@ Runtime data：
 - 正常指令不會輸出 raw token。
 - Remote Tunnel delete 需要確認或 `--yes`。
 - 不同客戶應使用限制到特定 Account / Zone 的最小權限 Token，不要共用跨客戶的高權限 credential。
+- 只有需要自動判斷 Zone 時才需要 `Zone:Zone:Read`；如果改用明確的 `--zone-id` 或 account default Zone ID，就不需要靠 Zone listing 來判斷。
 
 完整說明請看 [Security](./SECURITY.md)。
 
@@ -347,7 +377,7 @@ npm link
 npm run check
 ```
 
-測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention 與 adoption 等情境，Cloudflare API 測試使用 mocked response。
+測試包含 migration、向後相容、Cloudflare API error path、secret leakage、alias coexistence、duplicate prevention、adoption 與 DNS Zone 自動判斷等情境，Cloudflare API 測試使用 mocked response。
 
 ## 專案範圍
 

@@ -210,6 +210,57 @@ function normalizeIngress(configResult) {
   return { config: { ...config, ingress: ingress.filter((rule) => rule.hostname) }, catchAll };
 }
 
+function hostnameZoneCandidates(hostname) {
+  const host = hostname.startsWith('*.') ? hostname.slice(2) : hostname;
+  const labels = host.split('.').filter(Boolean);
+  const candidates = [];
+  for (let index = 0; index <= labels.length - 2; index += 1) {
+    candidates.push(labels.slice(index).join('.'));
+  }
+  return candidates;
+}
+
+async function resolveDnsZone(client, account, hostname, requestedZoneId = null) {
+  if (requestedZoneId) {
+    return { zoneId: validateZoneId(requestedZoneId), zoneName: null, source: 'explicit' };
+  }
+  if (account.defaultZoneId) {
+    return { zoneId: validateZoneId(account.defaultZoneId), zoneName: null, source: 'account-default' };
+  }
+
+  for (const candidate of hostnameZoneCandidates(hostname)) {
+    let zones;
+    try {
+      zones = await client.listZones({ name: candidate });
+    } catch (error) {
+      if (error?.status === 403) {
+        throw new Error(
+          `DNS management needs a Cloudflare Zone ID. No --zone-id or account default Zone ID is configured, and automatic zone discovery was denied by Cloudflare (403). ` +
+          'Automatic discovery requires Zone:Zone:Read for the target zone. Add that permission to the API Token or pass --zone-id <ZONE_ID>.',
+        );
+      }
+      throw error;
+    }
+
+    const matches = (Array.isArray(zones) ? zones : []).filter((zone) => zone?.name?.toLowerCase() === candidate.toLowerCase());
+    if (matches.length > 1) {
+      throw new Error(`Multiple Cloudflare Zones matched "${candidate}". Pass --zone-id <ZONE_ID> explicitly.`);
+    }
+    if (matches.length === 1) {
+      return {
+        zoneId: validateZoneId(matches[0].id),
+        zoneName: matches[0].name ?? candidate,
+        source: 'discovered',
+      };
+    }
+  }
+
+  throw new Error(
+    `Could not discover a Cloudflare Zone for "${hostname}". Pass --zone-id <ZONE_ID>, configure a default Zone ID on the account, ` +
+    'or grant the API Token Zone:Zone:Read so cfm can resolve the hostname automatically.',
+  );
+}
+
 export async function listRoutes(accountAlias, tunnelName, { fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
   const config = await loadConfig({ paths });
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
@@ -224,8 +275,8 @@ export async function addRoute(accountAlias, tunnelName, { hostname, origin, zon
   const config = await loadConfig({ paths });
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
   const account = config.accounts[accountAlias];
-  const effectiveZoneId = manageDns ? validateZoneId(zoneId || account.defaultZoneId) : null;
   const client = await clientForAccount(config, accountAlias, { fetchImpl });
+  const dnsZone = manageDns ? await resolveDnsZone(client, account, hostname, zoneId) : null;
   const current = await client.getTunnelConfig(profile.tunnelId).catch((error) => {
     if (error?.status === 404) return { config: { ingress: [] } };
     throw error;
@@ -234,8 +285,16 @@ export async function addRoute(accountAlias, tunnelName, { hostname, origin, zon
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   nextRules.push({ hostname, service: origin });
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-  if (manageDns) await client.upsertTunnelDns(effectiveZoneId, hostname, profile.tunnelId);
-  return { hostname, origin, tunnelId: profile.tunnelId, dnsManaged: manageDns };
+  if (manageDns) await client.upsertTunnelDns(dnsZone.zoneId, hostname, profile.tunnelId);
+  return {
+    hostname,
+    origin,
+    tunnelId: profile.tunnelId,
+    dnsManaged: manageDns,
+    zoneId: dnsZone?.zoneId ?? null,
+    zoneName: dnsZone?.zoneName ?? null,
+    zoneSource: dnsZone?.source ?? null,
+  };
 }
 
 export async function removeRoute(accountAlias, tunnelName, { hostname, zoneId = null, manageDns = false, fetchImpl = globalThis.fetch, paths = appPaths() } = {}) {
@@ -243,13 +302,20 @@ export async function removeRoute(accountAlias, tunnelName, { hostname, zoneId =
   const config = await loadConfig({ paths });
   const profile = await resolveManagedTunnel(config, accountAlias, tunnelName);
   const account = config.accounts[accountAlias];
-  const effectiveZoneId = manageDns ? validateZoneId(zoneId || account.defaultZoneId) : null;
   const client = await clientForAccount(config, accountAlias, { fetchImpl });
+  const dnsZone = manageDns ? await resolveDnsZone(client, account, hostname, zoneId) : null;
   const current = await client.getTunnelConfig(profile.tunnelId);
   const normalized = normalizeIngress(current);
   const nextRules = normalized.config.ingress.filter((rule) => rule.hostname !== hostname);
   await client.putTunnelConfig(profile.tunnelId, { ...normalized.config, ingress: [...nextRules, normalized.catchAll] });
-  if (manageDns) await client.deleteDnsByHostname(effectiveZoneId, hostname);
+  if (manageDns) await client.deleteDnsByHostname(dnsZone.zoneId, hostname);
+  return {
+    hostname,
+    dnsManaged: manageDns,
+    zoneId: dnsZone?.zoneId ?? null,
+    zoneName: dnsZone?.zoneName ?? null,
+    zoneSource: dnsZone?.source ?? null,
+  };
 }
 
 export async function expose(accountAlias, { name, hostname, origin, port, zoneId = null, manageDns = true, start = true, fetchImpl = globalThis.fetch, paths = appPaths(), startTunnelFn = null } = {}) {
@@ -271,13 +337,25 @@ export async function expose(accountAlias, { name, hostname, origin, port, zoneI
     await resolveManagedTunnel(initialConfig, accountAlias, name);
   }
 
+  let routeResult;
   try {
-    await addRoute(accountAlias, name, { hostname, origin, zoneId, manageDns, fetchImpl, paths });
+    routeResult = await addRoute(accountAlias, name, { hostname, origin, zoneId, manageDns, fetchImpl, paths });
   } catch (error) {
     if (created) await deleteManagedTunnel(accountAlias, name, { fetchImpl, paths }).catch(() => {});
     throw error;
   }
 
   if (start && startTunnelFn) await startTunnelFn(name, { paths });
-  return { name, hostname, origin, created, started: Boolean(start && startTunnelFn), url: `https://${hostname}` };
+  return {
+    name,
+    hostname,
+    origin,
+    created,
+    started: Boolean(start && startTunnelFn),
+    url: `https://${hostname}`,
+    dnsManaged: routeResult.dnsManaged,
+    zoneId: routeResult.zoneId,
+    zoneName: routeResult.zoneName,
+    zoneSource: routeResult.zoneSource,
+  };
 }

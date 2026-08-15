@@ -13,7 +13,7 @@
     ├── accounts/
     │   └── company-a.api-token
     └── tunnels/
-        └── solana-dev.token
+        └── project-dev.token
 
 ~/.local/state/cloudflare-management/
 ├── logs/
@@ -58,12 +58,12 @@ A simplified v0.2 configuration:
       "remoteName": "company-a-dev",
       "tokenFile": "/Users/you/.config/cloudflare-management/secrets/company-a.token"
     },
-    "solana-dev": {
+    "project-dev": {
       "managementMode": "provisioned",
       "account": "company-a",
       "tunnelId": "TUNNEL_UUID_2",
-      "remoteName": "solana-dev",
-      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/tunnels/solana-dev.token"
+      "remoteName": "project-dev",
+      "tokenFile": "/Users/you/.config/cloudflare-management/secrets/tunnels/project-dev.token"
     }
   }
 }
@@ -164,21 +164,31 @@ cfm account add company-a
 
 The first creates/uses `tunnels["company-a"]`; the second creates/uses `accounts["company-a"]`.
 
-## Default Zone ID
+## Default Zone ID and automatic discovery
 
-An Account record may store an optional `defaultZoneId`. It is used only when DNS automation is requested.
+An Account record may store an optional `defaultZoneId`. Tunnel provisioning itself does not require a Zone ID or DNS permission.
+
+When DNS automation is requested, Zone selection is:
+
+```text
+1. per-command --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic hostname-based Zone discovery
+```
 
 Per-command override:
 
 ```bash
-cfm route add company-a solana-dev \
-  --hostname webhook-dev.example.com \
+cfm route add company-a project-dev \
+  --hostname api-dev.example.com \
   --url http://localhost:3001 \
   --dns \
   --zone-id <ZONE_ID>
 ```
 
-Tunnel provisioning itself does not require a Zone ID or DNS permission.
+If neither an explicit nor default Zone ID exists, `cfm` checks the full hostname and parent domains through Cloudflare `GET /zones`. This allows accounts with multiple Zones to use the Zone that actually owns the hostname without persisting a single global default.
+
+Automatic discovery requires `Zone:Zone:Read` for the target Zone. DNS record changes still require the appropriate DNS write permission. Users who do not grant Zone Read can continue using an explicit/default Zone ID.
 
 ## Runtime state
 

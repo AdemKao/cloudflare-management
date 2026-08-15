@@ -24,11 +24,25 @@ This replaces the globally installed CLI package but does not remove your local 
 ## Install or pin a release
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
 Using a tag is recommended when you want reproducible developer-machine setup.
+
+## v0.2.1 DNS behavior
+
+v0.2.1 improves `--dns` so a missing Zone ID does not immediately fail validation.
+
+When DNS management is requested, Zone selection is now:
+
+```text
+1. --zone-id <ZONE_ID>
+2. account defaultZoneId
+3. automatic hostname-based Zone discovery
+```
+
+Automatic discovery uses Cloudflare `GET /zones`, so the API Token needs `Zone:Zone:Read` for the target Zone. DNS record changes still require the appropriate DNS write permission. If you intentionally do not grant Zone Read, continue passing `--zone-id <ZONE_ID>` explicitly.
 
 ## Where your local data lives
 
@@ -103,7 +117,7 @@ Do not copy secret files into a public repository or shared chat.
 To return to a tagged version:
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 Be aware that once schema v2 has been written, an older CLI that only understands schema v1 may not be suitable for reading that config. Prefer forward fixes or restore a pre-migration config backup only when you understand the consequences.

@@ -24,11 +24,25 @@ cfm --version
 ## 安裝或鎖定指定 Release
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 cfm --version
 ```
 
 如果希望不同開發機使用完全相同版本，建議使用 release tag。
+
+## v0.2.1 DNS 行為
+
+v0.2.1 改善了 `--dns`：沒有 Zone ID 時不會直接因為 validation 失敗。
+
+需要管理 DNS 時，Zone ID 會依序使用：
+
+```text
+1. --zone-id <ZONE_ID>
+2. Account 的 defaultZoneId
+3. 由 hostname 自動尋找對應 Zone
+```
+
+自動尋找會呼叫 Cloudflare `GET /zones`，因此 API Token 需要目標 Zone 的 `Zone:Zone:Read`。DNS record 的建立/更新仍需要對應 DNS write 權限。如果你刻意不提供 Zone Read，可以繼續明確傳入 `--zone-id <ZONE_ID>`。
 
 ## 本機資料放在哪裡
 
@@ -109,7 +123,7 @@ cfm doctor
 要重新安裝指定版本：
 
 ```bash
-npm install -g github:AdemKao/cloudflare-management#v0.2.0
+npm install -g github:AdemKao/cloudflare-management#v0.2.1
 ```
 
 但要注意：一旦 schema v2 已經寫入，舊版只認得 schema v1 的 CLI 不一定能正確讀取。通常應優先升級到修正版；只有在你理解影響時，才考慮還原 migration 前的 metadata backup。

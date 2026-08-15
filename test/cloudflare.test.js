@@ -50,6 +50,32 @@ test('createTunnel uses remotely-managed config source', async () => {
       return jsonResponse({ success: true, result: { id: '11111111-1111-1111-1111-111111111111', name: body.name } });
     },
   });
-  await client.createTunnel('solana-dev');
-  assert.deepEqual(body, { name: 'solana-dev', config_src: 'cloudflare' });
+  await client.createTunnel('project-dev');
+  assert.deepEqual(body, { name: 'project-dev', config_src: 'cloudflare' });
+});
+
+test('listZones searches by name and keeps zones from the configured account', async () => {
+  const accountId = '0123456789abcdef0123456789abcdef';
+  let seenUrl;
+  const client = new CloudflareClient({
+    accountId,
+    apiToken: 'x',
+    fetchImpl: async (url) => {
+      seenUrl = url;
+      return jsonResponse({
+        success: true,
+        result: [
+          { id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', name: 'example.com', account: { id: accountId } },
+          { id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'example.com', account: { id: 'ffffffffffffffffffffffffffffffff' } },
+        ],
+      });
+    },
+  });
+
+  const zones = await client.listZones({ name: 'example.com' });
+  const parsed = new URL(seenUrl);
+  assert.equal(parsed.pathname, '/client/v4/zones');
+  assert.equal(parsed.searchParams.get('name'), 'example.com');
+  assert.equal(parsed.searchParams.get('per_page'), '50');
+  assert.deepEqual(zones.map((zone) => zone.id), ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
 });
