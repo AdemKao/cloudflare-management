@@ -82,7 +82,7 @@ async function addLegacyTunnel(name, options, paths = appPaths()) {
   };
   await saveConfig(config, paths);
   console.log(`Added tunnel profile: ${name}`);
-  console.log(`Mode: token-only`);
+  console.log('Mode: token-only');
   console.log(`Token stored locally with mode 600: ${tokenFile}`);
 }
 
@@ -143,8 +143,20 @@ async function runAccount(positionals, options, paths) {
   }
   if (action === 'show') return printObject(await showAccount(requireValue(alias, 'cfm account show <name>'), paths));
   if (action === 'doctor') {
-    await doctorAccount(requireValue(alias, 'cfm account doctor <name>'), { paths });
-    console.log(`${alias}: API credential OK`);
+    requireValue(alias, 'cfm account doctor <name> [--hostname <hostname>] [--zone-id <id>]');
+    const result = await doctorAccount(alias, {
+      hostname: options.hostname || null,
+      zoneId: options['zone-id'] || null,
+      paths,
+    });
+    console.log(`${alias}: Tunnel API credential OK`);
+    if (!result.zoneChecked) {
+      console.log('Zone/DNS: not checked (pass --hostname <hostname> to validate DNS access)');
+      return;
+    }
+    console.log(`Zone: ${result.zoneName ?? result.zoneId} (${result.zoneSource})`);
+    console.log('DNS read: OK');
+    console.log('DNS write: not mutated by doctor; route --dns still requires Zone -> DNS -> Edit');
     return;
   }
   if (action === 'remove') {
@@ -235,6 +247,7 @@ async function runRoute(positionals, options, paths) {
     });
     console.log(`Configured ${result.hostname} -> ${result.origin}`);
     console.log(`DNS: ${result.dnsManaged ? 'managed' : 'unchanged'}`);
+    if (result.dnsManaged && result.zoneName) console.log(`Zone: ${result.zoneName} (${result.zoneSource})`);
     return;
   }
   if (action === 'remove') {
@@ -266,6 +279,7 @@ async function runExpose(positionals, options, paths) {
   });
   console.log(`${result.created ? 'Created' : 'Reused'} Tunnel: ${result.name}`);
   console.log(`Route: ${result.hostname} -> ${result.origin}`);
+  if (result.dnsManaged) console.log(`DNS: managed${result.zoneName ? ` in ${result.zoneName}` : ''}`);
   console.log(`Connector: ${result.started ? 'started' : 'not started'}`);
   console.log(`Public URL: ${result.url}`);
 }
@@ -294,7 +308,7 @@ Account API mode (v0.2):
   cfm account add <name> [--account-id <id>] [--token-file <path>] [--zone-id <id>] [--force]
   cfm account list
   cfm account show <name>
-  cfm account doctor <name>
+  cfm account doctor <name> [--hostname <hostname>] [--zone-id <id>]
   cfm account remove <name> [--yes]
 
   cfm tunnel list <account>
